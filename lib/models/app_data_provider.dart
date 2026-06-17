@@ -513,11 +513,14 @@ class AppDataProvider extends ChangeNotifier {
   Future<void> deleteBarber(String shopId, String barberId) =>
       deleteShopBarber(shopId, barberId);
 
-  /// Cria uma nova barbearia (admin) e persiste no Supabase.
+  /// Cria uma nova barbearia (admin) e persiste no Supabase, junto com o
+  /// login de acesso (role barberShop) do proprietário.
   Future<void> addBarbershop({
     required String name,
     required String address,
     required String phone,
+    required String ownerEmail,
+    required String ownerPassword,
   }) async {
     _isLoading = true;
     notifyListeners();
@@ -542,6 +545,15 @@ class AppDataProvider extends ChangeNotifier {
               isOpen: true,
             );
       _barbershops.add(shop);
+
+      if (_catalogDatasource.isConfigured) {
+        await _catalogDatasource.createBarbershopOwnerLogin(
+          barbershopId: shop.id,
+          name: name,
+          email: ownerEmail,
+          password: ownerPassword,
+        );
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -564,7 +576,9 @@ class AppDataProvider extends ChangeNotifier {
 
   Future<void> addShopBarber(String shopId, BarberModel barber) async {
     final shop = _shopById(shopId);
-    if (shop == null) return;
+    if (shop == null) {
+      throw StateError('Barbearia não encontrada (id: $shopId).');
+    }
 
     final saved = _catalogDatasource.isConfigured
         ? await _catalogDatasource.createBarber(
@@ -609,7 +623,9 @@ class AppDataProvider extends ChangeNotifier {
 
   Future<void> addShopService(String shopId, ServiceModel service) async {
     final shop = _shopById(shopId);
-    if (shop == null) return;
+    if (shop == null) {
+      throw StateError('Barbearia não encontrada (id: $shopId).');
+    }
 
     final saved = _catalogDatasource.isConfigured
         ? await _catalogDatasource.createService(

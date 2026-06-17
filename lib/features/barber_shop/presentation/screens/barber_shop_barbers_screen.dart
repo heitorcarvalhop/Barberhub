@@ -7,6 +7,7 @@ import 'package:barber_hub/core/theme/app_theme.dart';
 import 'package:barber_hub/features/barber_shop/presentation/providers/shop_management_providers.dart';
 import 'package:barber_hub/features/barber_shop/presentation/widgets/bs_widgets.dart';
 import 'package:barber_hub/features/client/data/models/barber_model.dart';
+import 'package:barber_hub/utils/validators.dart';
 
 class BarberShopBarbersScreen extends ConsumerWidget {
   const BarberShopBarbersScreen({super.key});
@@ -299,7 +300,9 @@ class _BarberModalState extends ConsumerState<_BarberModal> {
           BsTextField(
               label: 'Telefone',
               controller: _phoneCtrl,
-              keyboardType: TextInputType.phone),
+              keyboardType: TextInputType.phone,
+              validator: Validators.phone,
+              inputFormatters: Validators.phoneInputFormatters()),
           const SizedBox(height: 14),
           Row(children: [
             Text('Status:',

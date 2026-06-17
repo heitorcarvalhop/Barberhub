@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:barber_hub/core/services/supabase_service.dart';
 import 'package:barber_hub/models/barber_model.dart';
@@ -70,7 +71,13 @@ class SupabaseCatalogDatasource {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .select()
-        .single();
+        .single()
+        .timeout(
+          const Duration(seconds: 12),
+          onTimeout: () => throw TimeoutException(
+            'Tempo esgotado ao salvar serviço no Supabase.',
+          ),
+        );
 
     return _service(Map<String, dynamic>.from(row as Map));
   }
@@ -94,7 +101,13 @@ class SupabaseCatalogDatasource {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', serviceId)
-        .select();
+        .select()
+        .timeout(
+          const Duration(seconds: 12),
+          onTimeout: () => throw TimeoutException(
+            'Tempo esgotado ao atualizar serviço no Supabase.',
+          ),
+        );
 
     if (rows.isEmpty) {
       throw StateError('Nenhum serviço foi atualizado no Supabase.');
@@ -217,6 +230,38 @@ class SupabaseCatalogDatasource {
     );
   }
 
+  /// Cria o login (Supabase Auth + profile com role barberShop) do
+  /// proprietário de uma barbearia, via Edge Function `create-barbershop-owner`.
+  /// Necessário porque criar usuário direto pelo client trocaria a sessão
+  /// ativa (a do admin) para a do novo usuário.
+  Future<void> createBarbershopOwnerLogin({
+    required String barbershopId,
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    final client = SupabaseService.client;
+    if (client == null) {
+      throw StateError('Supabase não configurado.');
+    }
+
+    final response = await client.functions.invoke(
+      'create-barbershop-owner',
+      body: {
+        'barbershopId': barbershopId,
+        'name': name,
+        'email': email,
+        'password': password,
+      },
+    );
+
+    if (response.status != 200) {
+      final data = response.data;
+      final message = data is Map ? data['error'] as String? : null;
+      throw StateError(message ?? 'Não foi possível criar o login da barbearia.');
+    }
+  }
+
   Future<BarberModel> createBarber({
     required String barbershopId,
     required BarberModel barber,
@@ -237,7 +282,13 @@ class SupabaseCatalogDatasource {
           'is_active': barber.isActive,
         })
         .select()
-        .single();
+        .single()
+        .timeout(
+          const Duration(seconds: 12),
+          onTimeout: () => throw TimeoutException(
+            'Tempo esgotado ao salvar barbeiro no Supabase.',
+          ),
+        );
 
     return _barber(Map<String, dynamic>.from(row as Map));
   }
@@ -260,7 +311,13 @@ class SupabaseCatalogDatasource {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', barberId)
-        .select();
+        .select()
+        .timeout(
+          const Duration(seconds: 12),
+          onTimeout: () => throw TimeoutException(
+            'Tempo esgotado ao atualizar barbeiro no Supabase.',
+          ),
+        );
 
     if (rows.isEmpty) {
       throw StateError('Nenhum barbeiro foi atualizado no Supabase.');

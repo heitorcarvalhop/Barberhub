@@ -3,6 +3,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:barber_hub/core/theme/app_theme.dart';
 
@@ -203,10 +204,12 @@ class BsTextField extends StatelessWidget {
   final FocusNode? focusNode;
   final TextInputAction? textInputAction;
   final Widget? suffix;
+  final List<TextInputFormatter>? inputFormatters;
   const BsTextField({
     super.key, required this.label, this.hint, this.controller,
     this.keyboardType, this.maxLines = 1, this.validator,
     this.focusNode, this.textInputAction, this.suffix,
+    this.inputFormatters,
   });
 
   @override
@@ -217,6 +220,7 @@ class BsTextField extends StatelessWidget {
     focusNode: focusNode,
     textInputAction: textInputAction,
     validator: validator,
+    inputFormatters: inputFormatters,
     style: GoogleFonts.jost(color: AppTheme.textPrimary, fontSize: 15),
     decoration: InputDecoration(
       labelText: label, hintText: hint, suffix: suffix,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import '../../models/appointment_model.dart';
 import '../../core/routes/app_routes.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/app_utils.dart';
+import '../../utils/validators.dart';
 import '../../widgets/app_widgets.dart';
 import 'package:barber_hub/features/auth/presentation/providers/auth_providers.dart';
 
@@ -442,32 +444,54 @@ void _showCreateBarbershopDialog(BuildContext context, AppDataProvider data) {
   final nameCtrl = TextEditingController();
   final addrCtrl = TextEditingController();
   final phoneCtrl = TextEditingController();
+  final ownerEmailCtrl = TextEditingController();
+  final ownerPasswordCtrl = TextEditingController();
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: AppTheme.surface,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (sheetContext) => StatefulBuilder(
-      builder: (sheetContext, setState) {
-        var saving = false;
+    builder: (sheetContext) {
+      // `saving` precisa viver fora do builder do StatefulBuilder: esse builder
+      // é re-executado a cada setState, então uma var declarada dentro dele
+      // seria reiniciada para false a cada rebuild, fazendo o botão reabilitar
+      // antes da chamada de rede terminar e permitindo cliques duplicados.
+      var saving = false;
+      return StatefulBuilder(
+        builder: (sheetContext, setState) {
 
         Future<void> submit() async {
           if (nameCtrl.text.trim().isEmpty) return;
+          final phoneError = Validators.phone(phoneCtrl.text);
+          if (phoneError != null) {
+            AppUtils.showSnack(sheetContext, phoneError, isError: true);
+            return;
+          }
+          if (ownerEmailCtrl.text.trim().isEmpty) {
+            AppUtils.showSnack(sheetContext, 'Informe o e-mail de acesso da barbearia.', isError: true);
+            return;
+          }
+          if (ownerPasswordCtrl.text.trim().length < 6) {
+            AppUtils.showSnack(sheetContext, 'A senha precisa ter pelo menos 6 caracteres.', isError: true);
+            return;
+          }
           setState(() => saving = true);
           try {
             await data.addBarbershop(
               name: nameCtrl.text.trim(),
               address: addrCtrl.text.trim(),
               phone: phoneCtrl.text.trim(),
+              ownerEmail: ownerEmailCtrl.text.trim(),
+              ownerPassword: ownerPasswordCtrl.text.trim(),
             );
             if (sheetContext.mounted) {
               Navigator.pop(sheetContext);
-              AppUtils.showSnack(context, 'Barbearia criada com sucesso!');
+              AppUtils.showSnack(context, 'Barbearia e login de acesso criados com sucesso!');
             }
           } catch (e) {
             setState(() => saving = false);
             if (sheetContext.mounted) {
-              AppUtils.showSnack(sheetContext, 'Erro ao criar barbearia.', isError: true);
+              AppUtils.showSnack(sheetContext, 'Erro ao criar barbearia: ${e.toString()}', isError: true);
             }
           }
         }
@@ -475,7 +499,8 @@ void _showCreateBarbershopDialog(BuildContext context, AppDataProvider data) {
         return Padding(
           padding: EdgeInsets.only(left: 24, right: 24, top: 20,
               bottom: MediaQuery.of(context).viewInsets.bottom + 32),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Center(child: Container(width: 36, height: 4,
                 decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2)))),
             const SizedBox(height: 20),
@@ -486,7 +511,15 @@ void _showCreateBarbershopDialog(BuildContext context, AppDataProvider data) {
             const SizedBox(height: 12),
             _AdminTextField(ctrl: addrCtrl, label: 'Endereço', icon: Icons.location_on_rounded),
             const SizedBox(height: 12),
-            _AdminTextField(ctrl: phoneCtrl, label: 'Telefone', icon: Icons.phone_rounded),
+            _AdminTextField(ctrl: phoneCtrl, label: 'Telefone', icon: Icons.phone_rounded,
+                keyboardType: TextInputType.phone, inputFormatters: Validators.phoneInputFormatters()),
+            const SizedBox(height: 20),
+            Text('ACESSO DO PROPRIETÁRIO', style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: AppTheme.textHint, fontSize: 10, letterSpacing: 2)),
+            const SizedBox(height: 12),
+            _AdminTextField(ctrl: ownerEmailCtrl, label: 'E-mail de login', icon: Icons.mail_outline_rounded),
+            const SizedBox(height: 12),
+            _AdminTextField(ctrl: ownerPasswordCtrl, label: 'Senha de acesso', icon: Icons.lock_outline_rounded, obscureText: true),
             const SizedBox(height: 24),
             SizedBox(width: double.infinity, height: 52,
               child: ElevatedButton(
@@ -504,9 +537,11 @@ void _showCreateBarbershopDialog(BuildContext context, AppDataProvider data) {
               ),
             ),
           ]),
+          ),
         );
-      },
-    ),
+        },
+      );
+    },
   );
 }
 
@@ -514,11 +549,24 @@ class _AdminTextField extends StatelessWidget {
   final TextEditingController ctrl;
   final String label;
   final IconData icon;
-  const _AdminTextField({required this.ctrl, required this.label, required this.icon});
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  const _AdminTextField({
+    required this.ctrl,
+    required this.label,
+    required this.icon,
+    this.obscureText = false,
+    this.keyboardType,
+    this.inputFormatters,
+  });
 
   @override
   Widget build(BuildContext context) => TextField(
     controller: ctrl,
+    obscureText: obscureText,
+    keyboardType: keyboardType,
+    inputFormatters: inputFormatters,
     style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
     decoration: InputDecoration(
       labelText: label,

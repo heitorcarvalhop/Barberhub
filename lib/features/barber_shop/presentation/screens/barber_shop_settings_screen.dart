@@ -6,6 +6,7 @@ import 'package:barber_hub/features/barber_shop/domain/entities/shop_settings_en
 import 'package:barber_hub/features/barber_shop/domain/entities/working_hours_entity.dart';
 import 'package:barber_hub/features/barber_shop/presentation/providers/shop_management_providers.dart';
 import 'package:barber_hub/features/barber_shop/presentation/widgets/bs_widgets.dart';
+import 'package:barber_hub/utils/validators.dart';
 
 class BarberShopSettingsScreen extends ConsumerStatefulWidget {
   const BarberShopSettingsScreen({super.key});
@@ -122,6 +123,8 @@ class _State extends ConsumerState<BarberShopSettingsScreen> {
                   hint: '(11) 99999-9999',
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
+                  validator: Validators.phone,
+                  inputFormatters: Validators.phoneInputFormatters(),
                 ),
               ]),
             )),

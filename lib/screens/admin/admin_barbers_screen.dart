@@ -4,6 +4,7 @@ import '../../models/app_data_provider.dart';
 import '../../models/barber_model.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/app_utils.dart';
+import '../../utils/validators.dart';
 import '../../widgets/app_widgets.dart';
 
 class AdminBarbersScreen extends StatelessWidget {
@@ -343,6 +344,8 @@ class _BarberFormDialogState extends State<_BarberFormDialog> {
               label: 'Telefone', hint: '(11) 99999-0000', controller: _phone,
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.done,
+              validator: Validators.phone,
+              inputFormatters: Validators.phoneInputFormatters(),
             ),
 
             const SizedBox(height: 28),

@@ -334,6 +334,7 @@ class _FormSheet extends StatefulWidget {
 class _FormSheetState extends State<_FormSheet> {
   late final TextEditingController _name, _desc, _price, _duration;
   bool _active = true;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -358,11 +359,13 @@ class _FormSheetState extends State<_FormSheet> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final nm = _name.text.trim();
     if (nm.isEmpty) return;
     final price = double.tryParse(_price.text.replaceAll(',', '.')) ?? 0.0;
     final dur = int.tryParse(_duration.text) ?? 30;
 
+    setState(() => _saving = true);
     try {
       if (widget.existing == null) {
         await widget.data.addShopService(
@@ -392,6 +395,7 @@ class _FormSheetState extends State<_FormSheet> {
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
+      setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.toString())),
       );
@@ -464,18 +468,24 @@ class _FormSheetState extends State<_FormSheet> {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: _save,
+                onPressed: _saving ? null : _save,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.gold,
                   foregroundColor: AppTheme.background,
                   shape: const RoundedRectangleBorder(
                       borderRadius: BorderRadius.all(Radius.circular(8))),
                 ),
-                child: Text(
-                  isEdit ? 'SALVAR ALTERAÇÕES' : 'CRIAR SERVIÇO',
-                  style: GoogleFonts.jost(
-                      fontWeight: FontWeight.w700, letterSpacing: 1.5),
-                ),
+                child: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: AppTheme.background))
+                    : Text(
+                        isEdit ? 'SALVAR ALTERAÇÕES' : 'CRIAR SERVIÇO',
+                        style: GoogleFonts.jost(
+                            fontWeight: FontWeight.w700, letterSpacing: 1.5),
+                      ),
               ),
             ),
           ],
