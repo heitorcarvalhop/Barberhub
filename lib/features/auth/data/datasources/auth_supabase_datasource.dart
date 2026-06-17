@@ -93,6 +93,105 @@ class AuthSupabaseDatasource {
     await client.auth.resetPasswordForEmail(email);
   }
 
+  Future<void> verifyPasswordResetCode(String email, String token) async {
+    final client = _client;
+    if (client == null) return;
+    await client.auth.verifyOTP(
+      email: email,
+      token: token,
+      type: OtpType.recovery,
+    );
+  }
+
+  Future<void> updatePassword(String newPassword) async {
+    final client = _client;
+    if (client == null) return;
+    await client.auth.updateUser(UserAttributes(password: newPassword));
+  }
+
+  Future<(UserModel?, Failure?)> updateProfile({required String name}) async {
+    final client = _client;
+    final authUser = client?.auth.currentUser;
+    if (client == null || authUser == null) {
+      return (null, const AuthFailure('Sessao invalida.'));
+    }
+
+    try {
+      final profile = await client
+          .from('profiles')
+          .update({
+            'name': name,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', authUser.id)
+          .select()
+          .single();
+
+      await client.auth.updateUser(UserAttributes(data: {'name': name}));
+
+      return (_toUser(authUser, profile), null);
+    } catch (_) {
+      return (null, const UnknownFailure());
+    }
+  }
+
+  Future<Failure?> requestEmailChange(String newEmail) async {
+    final client = _client;
+    if (client == null) {
+      return const AuthFailure('Supabase nao configurado.');
+    }
+
+    try {
+      await client.auth.updateUser(UserAttributes(email: newEmail));
+      return null;
+    } on AuthException catch (e) {
+      return AuthFailure(_authMessage(e.message));
+    } catch (_) {
+      return const UnknownFailure();
+    }
+  }
+
+  Future<(UserModel?, Failure?)> confirmEmailChange({
+    required String newEmail,
+    required String token,
+  }) async {
+    final client = _client;
+    if (client == null) {
+      return (null, const AuthFailure('Supabase nao configurado.'));
+    }
+
+    try {
+      final response = await client.auth.verifyOTP(
+        email: newEmail,
+        token: token,
+        type: OtpType.emailChange,
+      );
+      final authUser = response.user ?? client.auth.currentUser;
+      if (authUser == null) {
+        return (
+          null,
+          const AuthFailure('Nao foi possivel confirmar o e-mail.')
+        );
+      }
+
+      final profile = await client
+          .from('profiles')
+          .update({
+            'email': newEmail,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', authUser.id)
+          .select()
+          .single();
+
+      return (_toUser(authUser, profile), null);
+    } on AuthException catch (e) {
+      return (null, AuthFailure(_authMessage(e.message)));
+    } catch (_) {
+      return (null, const UnknownFailure());
+    }
+  }
+
   Future<Map<String, dynamic>?> _loadProfile(String id) async {
     final client = _client;
     if (client == null) return null;
@@ -150,6 +249,10 @@ class AuthSupabaseDatasource {
     }
     if (normalized.contains('email not confirmed')) {
       return 'Confirme seu e-mail antes de entrar.';
+    }
+    if (normalized.contains('token has expired') ||
+        normalized.contains('invalid') && normalized.contains('otp')) {
+      return 'Código inválido ou expirado. Solicite um novo código.';
     }
     return message;
   }

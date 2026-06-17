@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:barber_hub/core/utils/app_icons.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:barber_hub/core/routes/app_routes.dart';
 import 'package:barber_hub/core/theme/app_theme.dart';
 import 'package:barber_hub/core/utils/app_utils.dart';
 import 'package:barber_hub/features/auth/presentation/providers/auth_providers.dart';
@@ -241,46 +242,55 @@ class _State extends ConsumerState<BarberShopDashboardScreen> {
                 SliverToBoxAdapter(
                     child: Padding(
                   padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppTheme.surfaceElevated,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppTheme.gold.withOpacity(0.2)),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => Navigator.pushNamed(
+                        context, AppRoutes.shopReviews,
+                        arguments: shop.id),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceElevated,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.gold.withOpacity(0.2)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.star_rounded,
+                            color: AppTheme.gold, size: 32),
+                        const SizedBox(width: 12),
+                        Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(shop.rating.toStringAsFixed(1),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineMedium
+                                      ?.copyWith(
+                                          color: AppTheme.gold, fontSize: 26)),
+                              Text('${shop.reviewCount} avaliações',
+                                  style: GoogleFonts.jost(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 12)),
+                            ]),
+                        const Spacer(),
+                        Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text('R\$ ${stats.totalRevenue.toStringAsFixed(0)}',
+                                  style: GoogleFonts.jost(
+                                      color: AppTheme.textPrimary,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700)),
+                              Text('receita total',
+                                  style: GoogleFonts.jost(
+                                      color: AppTheme.textSecondary,
+                                      fontSize: 11)),
+                            ]),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.chevron_right_rounded,
+                            color: AppTheme.textHint, size: 18),
+                      ]),
                     ),
-                    child: Row(children: [
-                      const Icon(Icons.star_rounded,
-                          color: AppTheme.gold, size: 32),
-                      const SizedBox(width: 12),
-                      Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(shop.rating.toStringAsFixed(1),
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .headlineMedium
-                                    ?.copyWith(
-                                        color: AppTheme.gold, fontSize: 26)),
-                            Text('${shop.reviewCount} avaliações',
-                                style: GoogleFonts.jost(
-                                    color: AppTheme.textSecondary,
-                                    fontSize: 12)),
-                          ]),
-                      const Spacer(),
-                      Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text('R\$ ${stats.totalRevenue.toStringAsFixed(0)}',
-                                style: GoogleFonts.jost(
-                                    color: AppTheme.textPrimary,
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w700)),
-                            Text('receita total',
-                                style: GoogleFonts.jost(
-                                    color: AppTheme.textSecondary,
-                                    fontSize: 11)),
-                          ]),
-                    ]),
                   ),
                 )),
 

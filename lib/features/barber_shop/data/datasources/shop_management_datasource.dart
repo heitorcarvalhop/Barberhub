@@ -108,6 +108,10 @@ class ShopManagementDatasource {
   // ── Blocked Dates ─────────────────────────────────────────────────────────
 
   Future<List<BlockedDateEntity>> loadBlockedDates(String shopId) async {
+    if (_blockedRemote.isConfigured) {
+      return _blockedRemote.loadBlockedDates(shopId);
+    }
+
     final p = await _prefs;
     final raw = p.getString(_blockedDatesKey(shopId));
     if (raw == null) return [];
@@ -123,6 +127,11 @@ class ShopManagementDatasource {
 
   Future<void> saveBlockedDates(
       String shopId, List<BlockedDateEntity> blocks) async {
+    if (_blockedRemote.isConfigured) {
+      await _blockedRemote.replaceBlockedDates(shopId, blocks);
+      return;
+    }
+
     final p = await _prefs;
     await p.setString(_blockedDatesKey(shopId),
         jsonEncode(blocks.map((b) => b.toJson()).toList()));

@@ -76,9 +76,33 @@ class ClientMembershipNotifier extends StateNotifier<ClientMembershipState> {
     return true;
   }
 
-  /// Cancela uma assinatura.
+  /// Faz upgrade/troca de plano de uma assinatura existente.
+  Future<bool> upgrade(String membershipId, String newPlanId) async {
+    state = state.copyWith(isSubscribing: true, clearError: true);
+    final (updated, failure) = await _repo.upgradeMembership(
+      membershipId: membershipId,
+      newPlanId: newPlanId,
+    );
+
+    if (failure != null || updated == null) {
+      state = state.copyWith(
+          isSubscribing: false, error: failure?.message ?? 'Erro desconhecido');
+      return false;
+    }
+
+    state = state.copyWith(
+      isSubscribing: false,
+      memberships:
+          state.memberships.map((m) => m.id == membershipId ? updated : m).toList(),
+      successMessage: 'Plano atualizado com sucesso!',
+    );
+    return true;
+  }
+
+  /// Cancela e remove a assinatura definitivamente (evita duplicatas
+  /// se o cliente assinar de novo na mesma barbearia).
   Future<void> cancel(String membershipId) async {
-    state = state.copyWith(isLoading: true);
+    state = state.copyWith(isLoading: true, clearError: true);
     final failure = await _repo.cancelMembership(membershipId);
     if (failure != null) {
       state = state.copyWith(isLoading: false, error: failure.message);
@@ -86,11 +110,8 @@ class ClientMembershipNotifier extends StateNotifier<ClientMembershipState> {
     }
     state = state.copyWith(
       isLoading: false,
-      memberships: state.memberships
-          .map((m) => m.id == membershipId
-              ? m.copyWith(status: MembershipStatus.cancelled)
-              : m)
-          .toList(),
+      memberships:
+          state.memberships.where((m) => m.id != membershipId).toList(),
       successMessage: 'Assinatura cancelada.',
     );
   }
@@ -126,6 +147,20 @@ class ClientMembershipNotifier extends StateNotifier<ClientMembershipState> {
               : m)
           .toList(),
       successMessage: 'Assinatura reativada!',
+    );
+  }
+
+  /// Registra o uso de um corte incluso no plano (resgatado no agendamento).
+  Future<void> useCut(String membershipId) async {
+    final (updated, failure) = await _repo.useCut(membershipId);
+    if (failure != null || updated == null) {
+      state = state.copyWith(error: failure?.message);
+      return;
+    }
+    state = state.copyWith(
+      memberships: state.memberships
+          .map((m) => m.id == membershipId ? updated : m)
+          .toList(),
     );
   }
 
@@ -177,6 +212,62 @@ class ShopMembershipNotifier extends StateNotifier<ShopMembershipState> {
       isSaving: false,
       plans: state.plans.map((p) => p.id == planId ? updated : p).toList(),
     );
+  }
+
+  /// Cria um novo plano para a barbearia.
+  Future<bool> createPlan(MembershipPlanEntity plan) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    final (created, failure) = await _repo.createPlan(plan);
+    if (failure != null || created == null) {
+      state = state.copyWith(
+          isSaving: false, error: failure?.message ?? 'Erro ao criar plano.');
+      return false;
+    }
+    state = state.copyWith(
+      isSaving: false,
+      plans: [...state.plans, created],
+    );
+    return true;
+  }
+
+  /// Salva edições completas de um plano existente.
+  Future<bool> savePlan(MembershipPlanEntity plan) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    final failure = await _repo.updatePlan(plan);
+    if (failure != null) {
+      state = state.copyWith(isSaving: false, error: failure.message);
+      return false;
+    }
+    state = state.copyWith(
+      isSaving: false,
+      plans: state.plans.map((p) => p.id == plan.id ? plan : p).toList(),
+    );
+    return true;
+  }
+
+  /// Exclui um plano. Bloqueia a exclusão se houver assinantes ativos nesse plano.
+  Future<bool> deletePlan(String planId) async {
+    final hasActiveSubscribers = state.subscribers.any((s) =>
+        s.plan.id == planId && s.status == MembershipStatus.active);
+    if (hasActiveSubscribers) {
+      state = state.copyWith(
+        error:
+            'Não é possível excluir um plano com assinantes ativos. Desative-o em vez disso.',
+      );
+      return false;
+    }
+
+    state = state.copyWith(isSaving: true, clearError: true);
+    final failure = await _repo.deletePlan(planId);
+    if (failure != null) {
+      state = state.copyWith(isSaving: false, error: failure.message);
+      return false;
+    }
+    state = state.copyWith(
+      isSaving: false,
+      plans: state.plans.where((p) => p.id != planId).toList(),
+    );
+    return true;
   }
 
   /// Registra uso de corte por um assinante (feito pelo barbeiro).

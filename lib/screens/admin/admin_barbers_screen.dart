@@ -12,7 +12,8 @@ class AdminBarbersScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = context.watch<AppDataProvider>();
-    final barbers = data.allBarbers;
+    final shop = data.selectedBarbershop ?? data.barbershops.firstOrNull;
+    final barbers = shop == null ? <BarberModel>[] : data.barbersForShop(shop.id);
 
     return Scaffold(
       body: SafeArea(
@@ -22,7 +23,8 @@ class AdminBarbersScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
             child: Row(children: [
               const Expanded(child: ScreenHeader(eyebrow: 'ADMINISTRADOR', title: 'Barbeiros')),
-              _AddButton(onTap: () => _showBarberDialog(context, data)),
+              if (shop != null)
+                _AddButton(onTap: () => _showBarberDialog(context, data, shop.id)),
             ]),
           ),
 
@@ -35,13 +37,16 @@ class AdminBarbersScreen extends StatelessWidget {
           const SizedBox(height: 20),
 
           Expanded(
-            child: barbers.isEmpty
+            child: shop == null || barbers.isEmpty
                 ? EmptyState(
                     icon: Icons.people_outline_rounded,
                     title: 'Sem barbeiros',
-                    subtitle: 'Adicione o primeiro barbeiro.',
-                    actionLabel: 'Adicionar',
-                    onAction: () => _showBarberDialog(context, data),
+                    subtitle: shop == null
+                        ? 'Crie uma barbearia primeiro.'
+                        : 'Adicione o primeiro barbeiro.',
+                    actionLabel: shop == null ? null : 'Adicionar',
+                    onAction:
+                        shop == null ? null : () => _showBarberDialog(context, data, shop.id),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -54,8 +59,10 @@ class AdminBarbersScreen extends StatelessWidget {
                         child: _BarberAdminCard(
                           barber: b,
                           appointmentCount: data.appointmentsForBarber(b.id).length,
-                          onEdit: () => _showBarberDialog(context, data, existing: b),
-                          onDelete: b.isActive ? () => _confirmDelete(context, data, b) : null,
+                          onEdit: () => _showBarberDialog(context, data, shop.id, existing: b),
+                          onDelete: b.isActive
+                              ? () => _confirmDelete(context, data, shop.id, b)
+                              : null,
                         ),
                       );
                     },
@@ -67,7 +74,7 @@ class AdminBarbersScreen extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(
-      BuildContext ctx, AppDataProvider data, BarberModel b) async {
+      BuildContext ctx, AppDataProvider data, String shopId, BarberModel b) async {
     final ok = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
@@ -87,16 +94,17 @@ class AdminBarbersScreen extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await data.deleteBarber(b.id);
+      await data.deleteBarber(shopId, b.id);
       if (ctx.mounted) AppUtils.showSnack(ctx, '"${b.name}" removido.', isError: true);
     }
   }
 
-  void _showBarberDialog(BuildContext context, AppDataProvider data, {BarberModel? existing}) {
+  void _showBarberDialog(BuildContext context, AppDataProvider data, String shopId,
+      {BarberModel? existing}) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _BarberFormDialog(existing: existing, data: data),
+      builder: (_) => _BarberFormDialog(existing: existing, data: data, shopId: shopId),
     );
   }
 }
@@ -209,7 +217,8 @@ class _ActionChip extends StatelessWidget {
 class _BarberFormDialog extends StatefulWidget {
   final BarberModel? existing;
   final AppDataProvider data;
-  const _BarberFormDialog({this.existing, required this.data});
+  final String shopId;
+  const _BarberFormDialog({this.existing, required this.data, required this.shopId});
 
   @override
   State<_BarberFormDialog> createState() => _BarberFormDialogState();
@@ -362,7 +371,7 @@ class _BarberFormDialogState extends State<_BarberFormDialog> {
         phone: _phone.text.trim(),
         avatarInitials: initials,
       );
-      await widget.data.updateBarber(widget.existing!.id, updated);
+      await widget.data.updateBarber(widget.shopId, updated);
     } else {
       final newBarber = BarberModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -373,7 +382,7 @@ class _BarberFormDialogState extends State<_BarberFormDialog> {
         rating: 5.0,
         reviewCount: 0,
       );
-      await widget.data.addBarber(newBarber);
+      await widget.data.addBarber(widget.shopId, newBarber);
     }
 
     if (mounted) {

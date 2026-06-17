@@ -15,7 +15,8 @@ class ReviewScreen extends StatefulWidget {
 }
 
 class _ReviewScreenState extends State<ReviewScreen> {
-  int _rating = 0;
+  int _barbershopRating = 0;
+  int _barberRating = 0;
   final _commentCtrl = TextEditingController();
   bool _submitting = false;
 
@@ -26,15 +27,17 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Future<void> _submit(AppointmentModel appt) async {
-    if (_rating == 0) {
-      AppUtils.showSnack(context, 'Selecione uma nota antes de enviar.');
+    if (_barbershopRating == 0 || _barberRating == 0) {
+      AppUtils.showSnack(
+          context, 'Avalie a barbearia e o barbeiro antes de enviar.');
       return;
     }
     setState(() => _submitting = true);
     try {
       await context.read<AppDataProvider>().submitReview(
             appointment: appt,
-            rating: _rating,
+            barbershopRating: _barbershopRating,
+            barberRating: _barberRating,
             comment: _commentCtrl.text,
           );
       if (mounted) {
@@ -85,39 +88,25 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   children: [
                     // ── Resumo do agendamento ─────────────────────────
                     _AppointmentSummary(appointment: appt),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 28),
 
-                    // ── Seletor de estrelas ───────────────────────────
-                    Center(
-                      child: Column(
-                        children: [
-                          Text('Como foi o seu atendimento?',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.copyWith(fontSize: 18)),
-                          const SizedBox(height: 6),
-                          Text(
-                            _rating == 0
-                                ? 'Toque nas estrelas para avaliar'
-                                : _ratingLabel(_rating),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  color: _rating == 0
-                                      ? AppTheme.textHint
-                                      : AppTheme.gold,
-                                  fontSize: 14,
-                                ),
-                          ),
-                          const SizedBox(height: 20),
-                          _StarRatingInput(
-                            value: _rating,
-                            onChanged: (v) => setState(() => _rating = v),
-                          ),
-                        ],
-                      ),
+                    // ── Avaliação da barbearia ────────────────────────
+                    _RatingSection(
+                      title: 'Como foi a barbearia?',
+                      subtitle: appt.barbershop.name,
+                      icon: Icons.storefront_rounded,
+                      value: _barbershopRating,
+                      onChanged: (v) => setState(() => _barbershopRating = v),
+                    ),
+                    const SizedBox(height: 28),
+
+                    // ── Avaliação do barbeiro ──────────────────────────
+                    _RatingSection(
+                      title: 'Como foi o atendimento do barbeiro?',
+                      subtitle: appt.barber.name,
+                      icon: Icons.person_rounded,
+                      value: _barberRating,
+                      onChanged: (v) => setState(() => _barberRating = v),
                     ),
                     const SizedBox(height: 36),
 
@@ -163,8 +152,11 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton.icon(
-                        onPressed:
-                            (_submitting || _rating == 0) ? null : () => _submit(appt),
+                        onPressed: (_submitting ||
+                                _barbershopRating == 0 ||
+                                _barberRating == 0)
+                            ? null
+                            : () => _submit(appt),
                         icon: _submitting
                             ? const SizedBox(
                                 width: 16,
@@ -192,7 +184,25 @@ class _ReviewScreenState extends State<ReviewScreen> {
     );
   }
 
-  String _ratingLabel(int r) {
+}
+
+// ── Seção de avaliação (título + estrelas) ──────────────────────────────────
+class _RatingSection extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  const _RatingSection({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+
+  static String _label(int r) {
     switch (r) {
       case 5: return '🤩  Excelente!';
       case 4: return '😊  Bom';
@@ -200,6 +210,45 @@ class _ReviewScreenState extends State<ReviewScreen> {
       case 2: return '😕  Ruim';
       default: return '😞  Péssimo';
     }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: AppTheme.gold),
+              const SizedBox(width: 6),
+              Text(subtitle,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(fontSize: 12, color: AppTheme.textSecondary)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(title,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontSize: 17),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 6),
+          Text(
+            value == 0 ? 'Toque nas estrelas para avaliar' : _label(value),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: value == 0 ? AppTheme.textHint : AppTheme.gold,
+                  fontSize: 13,
+                ),
+          ),
+          const SizedBox(height: 14),
+          _StarRatingInput(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
   }
 }
 
@@ -279,10 +328,10 @@ class _StarRatingInput extends StatelessWidget {
           onTap: () => onChanged(star),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             child: Icon(
               filled ? Icons.star_rounded : Icons.star_outline_rounded,
-              size: filled ? 48 : 44,
+              size: filled ? 38 : 34,
               color: filled ? AppTheme.gold : AppTheme.textHint,
             ),
           ),

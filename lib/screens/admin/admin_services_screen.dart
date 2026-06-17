@@ -13,7 +13,8 @@ class AdminServicesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = context.watch<AppDataProvider>();
-    final services = data.allServices;
+    final shop = data.selectedBarbershop ?? data.barbershops.firstOrNull;
+    final services = shop == null ? <ServiceModel>[] : data.servicesForShop(shop.id);
 
     return Scaffold(
       body: SafeArea(
@@ -23,7 +24,8 @@ class AdminServicesScreen extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
             child: Row(children: [
               const Expanded(child: ScreenHeader(eyebrow: 'ADMINISTRADOR', title: 'Serviços')),
-              _AddButton(onTap: () => _showServiceDialog(context, data)),
+              if (shop != null)
+                _AddButton(onTap: () => _showServiceDialog(context, data, shop.id)),
             ]),
           ),
 
@@ -36,13 +38,17 @@ class AdminServicesScreen extends StatelessWidget {
           const SizedBox(height: 20),
 
           Expanded(
-            child: services.isEmpty
+            child: shop == null || services.isEmpty
                 ? EmptyState(
                     icon: Icons.content_cut_outlined,
                     title: 'Sem serviços',
-                    subtitle: 'Adicione o primeiro serviço.',
-                    actionLabel: 'Adicionar',
-                    onAction: () => _showServiceDialog(context, data),
+                    subtitle: shop == null
+                        ? 'Crie uma barbearia primeiro.'
+                        : 'Adicione o primeiro serviço.',
+                    actionLabel: shop == null ? null : 'Adicionar',
+                    onAction: shop == null
+                        ? null
+                        : () => _showServiceDialog(context, data, shop.id),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -54,9 +60,10 @@ class AdminServicesScreen extends StatelessWidget {
                         opacity: s.isActive ? 1.0 : 0.4,
                         child: ServiceCard(
                           service: s,
-                          onEdit: () => _showServiceDialog(context, data, existing: s),
+                          onEdit: () =>
+                              _showServiceDialog(context, data, shop.id, existing: s),
                           onDelete: s.isActive
-                              ? () => _confirmDelete(context, data, s)
+                              ? () => _confirmDelete(context, data, shop.id, s)
                               : null,
                         ),
                       );
@@ -69,7 +76,7 @@ class AdminServicesScreen extends StatelessWidget {
   }
 
   Future<void> _confirmDelete(
-      BuildContext ctx, AppDataProvider data, ServiceModel s) async {
+      BuildContext ctx, AppDataProvider data, String shopId, ServiceModel s) async {
     final ok = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
@@ -89,17 +96,17 @@ class AdminServicesScreen extends StatelessWidget {
       ),
     );
     if (ok == true) {
-      await data.deleteService(s.id);
+      await data.deleteService(shopId, s.id);
       if (ctx.mounted) AppUtils.showSnack(ctx, '"${s.name}" removido.', isError: true);
     }
   }
 
-  void _showServiceDialog(BuildContext context, AppDataProvider data,
+  void _showServiceDialog(BuildContext context, AppDataProvider data, String shopId,
       {ServiceModel? existing}) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _ServiceFormDialog(existing: existing, data: data),
+      builder: (_) => _ServiceFormDialog(existing: existing, data: data, shopId: shopId),
     );
   }
 }
@@ -108,7 +115,8 @@ class AdminServicesScreen extends StatelessWidget {
 class _ServiceFormDialog extends StatefulWidget {
   final ServiceModel? existing;
   final AppDataProvider data;
-  const _ServiceFormDialog({this.existing, required this.data});
+  final String shopId;
+  const _ServiceFormDialog({this.existing, required this.data, required this.shopId});
 
   @override
   State<_ServiceFormDialog> createState() => _ServiceFormDialogState();
@@ -270,7 +278,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
         durationMinutes: duration,
         iconName: _iconName,
       );
-      await widget.data.updateService(widget.existing!.id, updated);
+      await widget.data.updateService(widget.shopId, updated);
     } else {
       final newService = ServiceModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -280,7 +288,7 @@ class _ServiceFormDialogState extends State<_ServiceFormDialog> {
         durationMinutes: duration,
         iconName: _iconName,
       );
-      await widget.data.addService(newService);
+      await widget.data.addService(widget.shopId, newService);
     }
 
     if (mounted) {

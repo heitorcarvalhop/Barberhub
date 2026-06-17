@@ -16,11 +16,13 @@ class AuthMockDatasource {
     // diferente. Normalização aplicada também aqui como defesa em profundidade.
     final normalizedEmail = email.trim().toLowerCase();
 
-    final match = MockData.users.where(
-      (u) =>
-          (u['email'] as String).toLowerCase() == normalizedEmail &&
-          u['password'] == password,
-    ).firstOrNull;
+    final match = MockData.users
+        .where(
+          (u) =>
+              (u['email'] as String).toLowerCase() == normalizedEmail &&
+              u['password'] == password,
+        )
+        .firstOrNull;
 
     if (match == null) {
       return (null, const AuthFailure('E-mail ou senha incorretos.'));
@@ -71,6 +73,68 @@ class AuthMockDatasource {
         name: newUser['name'] as String,
         email: newUser['email'] as String,
         role: UserRole.client,
+      ),
+      null,
+    );
+  }
+
+  Future<(UserModel?, Failure?)> updateProfile({
+    required String id,
+    required String name,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final idx = MockData.users.indexWhere((u) => u['id'] == id);
+    if (idx == -1) {
+      return (null, const AuthFailure('Usuário não encontrado.'));
+    }
+
+    MockData.users[idx] = {...MockData.users[idx], 'name': name};
+    final updated = MockData.users[idx];
+
+    return (
+      UserModel(
+        id: updated['id'] as String,
+        name: updated['name'] as String,
+        email: updated['email'] as String,
+        role: updated['role'] as UserRole,
+        linkedId: updated['linkedId'] as String?,
+      ),
+      null,
+    );
+  }
+
+  Future<(UserModel?, Failure?)> updateEmail({
+    required String id,
+    required String newEmail,
+  }) async {
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final idx = MockData.users.indexWhere((u) => u['id'] == id);
+    if (idx == -1) {
+      return (null, const AuthFailure('Usuário não encontrado.'));
+    }
+
+    final normalizedEmail = newEmail.trim().toLowerCase();
+    final alreadyUsed = MockData.users.any(
+      (u) =>
+          u['id'] != id &&
+          (u['email'] as String).toLowerCase() == normalizedEmail,
+    );
+    if (alreadyUsed) {
+      return (null, const AuthFailure('Este e-mail já está cadastrado.'));
+    }
+
+    MockData.users[idx] = {...MockData.users[idx], 'email': normalizedEmail};
+    final updated = MockData.users[idx];
+
+    return (
+      UserModel(
+        id: updated['id'] as String,
+        name: updated['name'] as String,
+        email: updated['email'] as String,
+        role: updated['role'] as UserRole,
+        linkedId: updated['linkedId'] as String?,
       ),
       null,
     );

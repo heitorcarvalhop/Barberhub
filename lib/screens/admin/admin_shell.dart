@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../models/app_data_provider.dart';
 import '../../theme/app_theme.dart';
+import '../client/ai_assistant_screen.dart';
 import 'admin_overview_screen.dart';
 import 'admin_services_screen.dart';
 import 'admin_barbers_screen.dart';
@@ -21,6 +22,7 @@ class _AdminShellState extends State<AdminShell> {
     AdminOverviewScreen(),
     AdminServicesScreen(),
     AdminBarbersScreen(),
+    AiAssistantScreen(canConfigure: true, showBackButton: false),
   ];
 
   @override
@@ -156,6 +158,12 @@ class _AdminNav extends StatelessWidget {
                 label: 'Barbeiros',
                 selected: currentIndex == 2,
                 onTap: () => onTap(2)),
+            _Item(
+                icon: Icons.auto_awesome_outlined,
+                activeIcon: Icons.auto_awesome_rounded,
+                label: 'IA',
+                selected: currentIndex == 3,
+                onTap: () => onTap(3)),
           ]),
         ),
       ),

@@ -20,6 +20,25 @@ abstract interface class IAuthRepository {
   /// Encerra sessão.
   Future<void> logout();
 
-  /// Simula envio de link de redefinição de senha.
+  /// Envia código de recuperação de senha para o email.
   Future<void> sendPasswordReset(String email);
+
+  /// Verifica o código de 6 dígitos recebido no email.
+  Future<void> verifyPasswordResetCode(String email, String token);
+
+  /// Atualiza a senha após verificação do código.
+  Future<void> updatePassword(String newPassword);
+
+  /// Atualiza dados do perfil do usuário autenticado.
+  Future<(UserEntity?, Failure?)> updateProfile({required String name});
+
+  /// Inicia a troca de e-mail: envia um código de confirmação para o novo
+  /// endereço. O e-mail só é efetivado após [confirmEmailChange].
+  Future<Failure?> requestEmailChange(String newEmail);
+
+  /// Confirma a troca de e-mail com o código recebido em [newEmail].
+  Future<(UserEntity?, Failure?)> confirmEmailChange({
+    required String newEmail,
+    required String token,
+  });
 }

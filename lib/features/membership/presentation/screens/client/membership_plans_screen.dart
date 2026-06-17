@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:barber_hub/core/theme/app_theme.dart';
 import 'package:barber_hub/features/auth/presentation/providers/auth_providers.dart';
+import 'package:barber_hub/features/membership/domain/entities/membership_entity.dart';
 import 'package:barber_hub/features/membership/presentation/providers/membership_providers.dart';
 import 'package:barber_hub/features/membership/presentation/widgets/membership_widgets.dart';
 import 'package:barber_hub/features/membership/presentation/models/membership_plans_args.dart';
@@ -63,6 +64,35 @@ class _MembershipPlansScreenState extends ConsumerState<MembershipPlansScreen> {
       final error = ref.read(clientMembershipProvider).error;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error ?? 'Erro ao assinar plano.')),
+      );
+    }
+  }
+
+  Future<void> _upgrade(MembershipEntity activePlan) async {
+    if (_selectedPlanId == null || _selectedPlanId == activePlan.plan.id) {
+      return;
+    }
+
+    final success = await ref
+        .read(clientMembershipProvider.notifier)
+        .upgrade(activePlan.id, _selectedPlanId!);
+
+    if (!mounted) return;
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(children: [
+            Icon(Icons.check_circle_outline, color: AppTheme.gold, size: 18),
+            SizedBox(width: 10),
+            Text('Plano atualizado com sucesso!'),
+          ]),
+        ),
+      );
+      Navigator.pop(context);
+    } else {
+      final error = ref.read(clientMembershipProvider).error;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? 'Erro ao atualizar plano.')),
       );
     }
   }
@@ -158,7 +188,8 @@ class _MembershipPlansScreenState extends ConsumerState<MembershipPlansScreen> {
                                     isSelected: _selectedPlanId == plan.id,
                                     isCurrentPlan:
                                         activePlan?.plan.id == plan.id,
-                                    onTap: activePlan != null
+                                    onTap: activePlan != null &&
+                                            activePlan.plan.id == plan.id
                                         ? null
                                         : () => setState(
                                             () => _selectedPlanId = plan.id),
@@ -170,25 +201,31 @@ class _MembershipPlansScreenState extends ConsumerState<MembershipPlansScreen> {
         ),
       ),
       // ── CTA Button ────────────────────────────────────────────────────
-      bottomNavigationBar: activePlan != null
-          ? null
-          : Container(
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
-              decoration: const BoxDecoration(
-                color: AppTheme.surface,
-                border:
-                    Border(top: BorderSide(color: AppTheme.divider, width: 1)),
-              ),
-              child: PrimaryButton(
-                label: _selectedPlanId == null
-                    ? 'Selecione um plano'
-                    : 'Assinar plano selecionado',
-                onPressed: _selectedPlanId == null || args == null
-                    ? null
-                    : () => _subscribe(args),
-                isLoading: membershipState.isSubscribing,
-              ),
-            ),
+      bottomNavigationBar: Container(
+        padding: const EdgeInsets.fromLTRB(24, 12, 24, 28),
+        decoration: const BoxDecoration(
+          color: AppTheme.surface,
+          border: Border(top: BorderSide(color: AppTheme.divider, width: 1)),
+        ),
+        child: PrimaryButton(
+          label: _ctaLabel(activePlan),
+          onPressed: _selectedPlanId == null ||
+                  args == null ||
+                  _selectedPlanId == activePlan?.plan.id
+              ? null
+              : () => activePlan != null
+                  ? _upgrade(activePlan)
+                  : _subscribe(args),
+          isLoading: membershipState.isSubscribing,
+        ),
+      ),
     );
+  }
+
+  String _ctaLabel(MembershipEntity? activePlan) {
+    if (_selectedPlanId == null) return 'Selecione um plano';
+    if (activePlan == null) return 'Assinar plano selecionado';
+    if (_selectedPlanId == activePlan.plan.id) return 'Plano atual';
+    return 'Confirmar upgrade';
   }
 }

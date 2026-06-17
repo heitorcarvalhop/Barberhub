@@ -34,6 +34,21 @@ class SupabaseCatalogDatasource {
     }
   }
 
+  Future<void> updateWorkingHours({
+    required String id,
+    required Map<int, WorkingHoursEntity> workingHours,
+  }) async {
+    final client = SupabaseService.client;
+    if (client == null) return;
+
+    await client.from('barbershops').update({
+      'working_hours': workingHours.map(
+        (k, v) => MapEntry(k.toString(), v.toJson()),
+      ),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', id);
+  }
+
   Future<ServiceModel> createService({
     required String barbershopId,
     required ServiceModel service,
@@ -82,7 +97,7 @@ class SupabaseCatalogDatasource {
         .select();
 
     if (rows.isEmpty) {
-      throw StateError('Nenhum serviÃ§o foi atualizado no Supabase.');
+      throw StateError('Nenhum serviço foi atualizado no Supabase.');
     }
 
     return _service(Map<String, dynamic>.from(rows.first as Map));
@@ -102,7 +117,173 @@ class SupabaseCatalogDatasource {
         .select('id');
 
     if (rows.isEmpty) {
-      throw StateError('Nenhum serviÃ§o foi desativado no Supabase.');
+      throw StateError('Nenhum serviço foi desativado no Supabase.');
+    }
+  }
+
+  Future<BarbershopModel> createBarbershop({
+    required String name,
+    required String address,
+    required String phone,
+  }) async {
+    final client = SupabaseService.client;
+    if (client == null) {
+      throw StateError('Supabase não configurado para criar barbearias.');
+    }
+
+    final row = await client
+        .from('barbershops')
+        .insert({
+          'name': name,
+          'address': address,
+          'phone': phone,
+          'rating': 0,
+          'review_count': 0,
+          'cover_emoji': 'scissors',
+          'is_open': true,
+        })
+        .select()
+        .single();
+
+    final shopId = _string(row['id']);
+
+    final plans = [
+      {
+        'barbershop_id': shopId,
+        'tier': 'basic',
+        'name': 'Basic',
+        'price_monthly': 49.90,
+        'cuts_per_month': 2,
+        'includes_beard': false,
+        'priority_booking': false,
+        'product_discount_percent': 10,
+        'benefits': [
+          '2 cortes por mês incluídos',
+          '10% de desconto em produtos',
+          'Agendamento facilitado pelo app',
+          'Histórico completo de visitas',
+        ],
+      },
+      {
+        'barbershop_id': shopId,
+        'tier': 'premium',
+        'name': 'Premium',
+        'price_monthly': 89.90,
+        'cuts_per_month': null,
+        'includes_beard': true,
+        'priority_booking': false,
+        'product_discount_percent': 20,
+        'benefits': [
+          'Cortes ilimitados no mês',
+          'Barba incluída sem custo extra',
+          '20% de desconto em produtos',
+          'Agendamento facilitado pelo app',
+          'Notificação antecipada de horários',
+        ],
+      },
+      {
+        'barbershop_id': shopId,
+        'tier': 'vip',
+        'name': 'VIP',
+        'price_monthly': 129.90,
+        'cuts_per_month': null,
+        'includes_beard': true,
+        'priority_booking': true,
+        'product_discount_percent': 30,
+        'benefits': [
+          'Cortes + Barba ilimitados',
+          'Prioridade no agendamento',
+          '30% de desconto em produtos',
+          'Atendimento exclusivo sem fila',
+          'Brinde mensal surpresa',
+          'Acesso antecipado a novidades',
+        ],
+      },
+    ];
+    await client.from('membership_plans').insert(plans);
+
+    return BarbershopModel(
+      id: shopId,
+      name: _string(row['name'], fallback: 'Barbearia'),
+      address: _string(row['address'], fallback: 'Endereco nao informado'),
+      rating: _double(row['rating']),
+      reviewCount: _int(row['review_count']),
+      coverEmoji: _string(row['cover_emoji'], fallback: 'scissors'),
+      phone: _nullableString(row['phone']),
+      isOpen: _bool(row['is_open'], fallback: true),
+      services: const [],
+      barbers: const [],
+      products: const [],
+    );
+  }
+
+  Future<BarberModel> createBarber({
+    required String barbershopId,
+    required BarberModel barber,
+  }) async {
+    final client = SupabaseService.client;
+    if (client == null) return barber;
+
+    final row = await client
+        .from('barbers')
+        .insert({
+          'barbershop_id': barbershopId,
+          'name': barber.name,
+          'specialty': barber.specialty,
+          'rating': barber.rating,
+          'review_count': barber.reviewCount,
+          'avatar_initials': barber.avatarInitials,
+          'phone': barber.phone,
+          'is_active': barber.isActive,
+        })
+        .select()
+        .single();
+
+    return _barber(Map<String, dynamic>.from(row as Map));
+  }
+
+  Future<BarberModel> updateBarber({
+    required String barberId,
+    required BarberModel barber,
+  }) async {
+    final client = SupabaseService.client;
+    if (client == null) return barber;
+
+    final rows = await client
+        .from('barbers')
+        .update({
+          'name': barber.name,
+          'specialty': barber.specialty,
+          'avatar_initials': barber.avatarInitials,
+          'phone': barber.phone,
+          'is_active': barber.isActive,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', barberId)
+        .select();
+
+    if (rows.isEmpty) {
+      throw StateError('Nenhum barbeiro foi atualizado no Supabase.');
+    }
+
+    return _barber(Map<String, dynamic>.from(rows.first as Map));
+  }
+
+  Future<void> deactivateBarber(String barberId) async {
+    final client = SupabaseService.client;
+    if (client == null) return;
+
+    final rows = await client
+        .from('barbers')
+        .update({
+          'is_active': false,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', barberId)
+        .select('id');
+
+    if (rows.isEmpty) {
+      throw StateError('Nenhum barbeiro foi desativado no Supabase.');
     }
   }
 
@@ -172,8 +353,22 @@ class SupabaseCatalogDatasource {
         services: servicesByShop[id] ?? [],
         barbers: barbersByShop[id] ?? [],
         products: productsByShop[id] ?? [],
+        workingHours: _workingHours(row['working_hours']),
       );
     }).toList();
+  }
+
+  Map<int, WorkingHoursEntity> _workingHours(Object? value) {
+    if (value is! Map) return WorkingHoursEntity.defaultSchedule();
+    final result = <int, WorkingHoursEntity>{};
+    for (final entry in value.entries) {
+      final weekday = int.tryParse(entry.key.toString());
+      if (weekday == null || entry.value is! Map) continue;
+      result[weekday] = WorkingHoursEntity.fromJson(
+        Map<String, dynamic>.from(entry.value as Map),
+      );
+    }
+    return result.isEmpty ? WorkingHoursEntity.defaultSchedule() : result;
   }
 
   List<Map<String, dynamic>> _rows(Object? value) {

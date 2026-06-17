@@ -196,9 +196,14 @@ class ProfileScreen extends ConsumerWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: AppointmentCard(
-                    appointment: active.first,
-                    showBarbershop: true,
+                  child: GestureDetector(
+                    onTap: () => Navigator.pushReplacementNamed(
+                        context, AppRoutes.home,
+                        arguments: 1),
+                    child: AppointmentCard(
+                      appointment: active.first,
+                      showBarbershop: true,
+                    ),
                   ),
                 ),
               ],
@@ -213,18 +218,20 @@ class ProfileScreen extends ConsumerWidget {
                   children: [
                     const SectionHeader(title: 'Conta'),
                     const SizedBox(height: 12),
-                    const _MenuItem(
+                    _MenuItem(
                         icon: Icons.person_outline_rounded,
                         label: 'Editar perfil',
-                        tag: 'Em breve'),
+                        onTap: () => Navigator.pushNamed(
+                            context, AppRoutes.editProfile)),
                     const _MenuItem(
                         icon: Icons.notifications_outlined,
                         label: 'Notificações',
                         tag: 'Em breve'),
-                    const _MenuItem(
+                    _MenuItem(
                         icon: Icons.lock_outline_rounded,
                         label: 'Alterar senha',
-                        tag: 'Em breve'),
+                        onTap: () => Navigator.pushNamed(
+                            context, AppRoutes.forgotPassword)),
                     const SizedBox(height: 20),
                     const SectionHeader(title: 'Suporte'),
                     const SizedBox(height: 12),
@@ -324,46 +331,53 @@ class _StatTile extends StatelessWidget {
 class _MenuItem extends StatelessWidget {
   final IconData icon;
   final String label;
-  final String tag;
-  const _MenuItem({required this.icon, required this.label, required this.tag});
+  final String? tag;
+  final VoidCallback? onTap;
+  const _MenuItem(
+      {required this.icon, required this.label, this.tag, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceElevated,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.inputBorder),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: AppTheme.textSecondary, size: 20),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(label,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyLarge
-                    ?.copyWith(fontSize: 14)),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppTheme.textHint.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(4),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceElevated,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.inputBorder),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: AppTheme.textSecondary, size: 20),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(label,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyLarge
+                      ?.copyWith(fontSize: 14)),
             ),
-            child: Text(tag,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(fontSize: 10, color: AppTheme.textHint)),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.chevron_right_rounded,
-              size: 18, color: AppTheme.textHint),
-        ],
+            if (tag != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppTheme.textHint.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(tag!,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(fontSize: 10, color: AppTheme.textHint)),
+              ),
+            const SizedBox(width: 8),
+            const Icon(Icons.chevron_right_rounded,
+                size: 18, color: AppTheme.textHint),
+          ],
+        ),
       ),
     );
   }

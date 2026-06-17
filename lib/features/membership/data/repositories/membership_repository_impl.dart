@@ -1,11 +1,12 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:barber_hub/core/errors/failures.dart';
-import 'package:barber_hub/features/membership/data/datasources/membership_mock_datasource.dart';
+import 'package:barber_hub/features/membership/data/datasources/membership_supabase_datasource.dart';
 import 'package:barber_hub/features/membership/domain/entities/membership_entity.dart';
 import 'package:barber_hub/features/membership/domain/entities/membership_plan_entity.dart';
 import 'package:barber_hub/features/membership/domain/repositories/i_membership_repository.dart';
 
 class MembershipRepositoryImpl implements IMembershipRepository {
-  final MembershipMockDatasource _datasource;
+  final MembershipSupabaseDatasource _datasource;
   const MembershipRepositoryImpl(this._datasource);
 
   @override
@@ -20,14 +21,44 @@ class MembershipRepositoryImpl implements IMembershipRepository {
   }
 
   @override
+  Future<(MembershipPlanEntity?, Failure?)> createPlan(
+      MembershipPlanEntity plan) async {
+    try {
+      final created = await _datasource.createPlan(plan);
+      return (created, null);
+    } catch (e) {
+      if (e is PostgrestException && e.code == '23505') {
+        return (
+          null,
+          ValidationFailure(
+              'Já existe um plano "${plan.tier.name}" para esta barbearia. Edite-o ou exclua-o antes de criar outro do mesmo tier.'),
+        );
+      }
+      return (null, UnknownFailure('Erro ao criar plano: ${_describe(e)}'));
+    }
+  }
+
+  @override
   Future<Failure?> updatePlan(MembershipPlanEntity plan) async {
     try {
       await _datasource.updatePlan(plan);
       return null;
     } catch (e) {
-      return const UnknownFailure('Erro ao atualizar plano.');
+      return UnknownFailure('Erro ao atualizar plano: ${_describe(e)}');
     }
   }
+
+  @override
+  Future<Failure?> deletePlan(String planId) async {
+    try {
+      await _datasource.deletePlan(planId);
+      return null;
+    } catch (e) {
+      return UnknownFailure('Erro ao excluir plano: ${_describe(e)}');
+    }
+  }
+
+  String _describe(Object e) => e is StateError ? e.message : e.toString();
 
   @override
   Future<(List<MembershipEntity>, Failure?)> getClientMemberships(
@@ -72,12 +103,28 @@ class MembershipRepositoryImpl implements IMembershipRepository {
   }
 
   @override
+  Future<(MembershipEntity?, Failure?)> upgradeMembership({
+    required String membershipId,
+    required String newPlanId,
+  }) async {
+    try {
+      final updated = await _datasource.upgradeMembership(
+        membershipId: membershipId,
+        newPlanId: newPlanId,
+      );
+      return (updated, null);
+    } catch (e) {
+      return (null, UnknownFailure('Erro ao atualizar plano: ${_describe(e)}'));
+    }
+  }
+
+  @override
   Future<Failure?> cancelMembership(String membershipId) async {
     try {
       await _datasource.cancelMembership(membershipId);
       return null;
     } catch (e) {
-      return const UnknownFailure('Erro ao cancelar assinatura.');
+      return UnknownFailure('Erro ao cancelar assinatura: ${_describe(e)}');
     }
   }
 
@@ -87,7 +134,7 @@ class MembershipRepositoryImpl implements IMembershipRepository {
       await _datasource.pauseMembership(membershipId);
       return null;
     } catch (e) {
-      return const UnknownFailure('Erro ao pausar assinatura.');
+      return UnknownFailure('Erro ao pausar assinatura: ${_describe(e)}');
     }
   }
 
@@ -97,7 +144,7 @@ class MembershipRepositoryImpl implements IMembershipRepository {
       await _datasource.resumeMembership(membershipId);
       return null;
     } catch (e) {
-      return const UnknownFailure('Erro ao reativar assinatura.');
+      return UnknownFailure('Erro ao reativar assinatura: ${_describe(e)}');
     }
   }
 

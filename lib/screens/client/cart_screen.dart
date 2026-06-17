@@ -1,12 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../../features/membership/presentation/providers/membership_providers.dart';
 import '../../models/cart_provider.dart';
 import '../../models/product_model.dart';
 import '../../theme/app_theme.dart';
 
-class CartScreen extends StatelessWidget {
+class CartScreen extends ConsumerStatefulWidget {
   const CartScreen({super.key});
+
+  @override
+  ConsumerState<CartScreen> createState() => _CartScreenState();
+}
+
+class _CartScreenState extends ConsumerState<CartScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncMembershipDiscount());
+  }
+
+  Future<void> _syncMembershipDiscount() async {
+    final cart = context.read<CartProvider>();
+    final shopId = cart.barbershop?.id;
+    if (shopId == null) return;
+
+    final authState = ref.read(authNotifierProvider);
+    if (authState is! AuthAuthenticated) return;
+
+    await ref
+        .read(clientMembershipProvider.notifier)
+        .load(clientId: authState.user.id, shopId: shopId);
+    if (!mounted) return;
+
+    final membership =
+        ref.read(clientMembershipProvider).activeForShop(shopId);
+    cart.setMembershipDiscountPercent(
+        membership?.plan.productDiscountPercent ?? 0);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -453,6 +486,56 @@ class _CartFooterState extends State<_CartFooter> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (cart.membershipDiscountPercent > 0) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.gold.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.gold.withOpacity(0.25)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.workspace_premium_rounded,
+                          color: AppTheme.gold, size: 14),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Desconto assinatura (-${cart.membershipDiscountPercent}%)',
+                          style: GoogleFonts.jost(
+                              color: AppTheme.gold,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Text(
+                        cart.formattedDiscount,
+                        style: GoogleFonts.jost(
+                            color: AppTheme.gold,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text('Subtotal',
+                          style: GoogleFonts.jost(
+                              color: AppTheme.textHint, fontSize: 11)),
+                      const Spacer(),
+                      Text(cart.formattedSubtotal,
+                          style: GoogleFonts.jost(
+                              color: AppTheme.textHint, fontSize: 11)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
           // Resumo
           Row(
             children: [

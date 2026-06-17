@@ -10,8 +10,14 @@ abstract interface class IMembershipRepository {
   /// Retorna os planos disponíveis de uma barbearia.
   Future<(List<MembershipPlanEntity>, Failure?)> getPlansForShop(String shopId);
 
+  /// Cria um novo plano para a barbearia (proprietário).
+  Future<(MembershipPlanEntity?, Failure?)> createPlan(MembershipPlanEntity plan);
+
   /// Atualiza configurações de um plano (proprietário).
   Future<Failure?> updatePlan(MembershipPlanEntity plan);
+
+  /// Exclui um plano (proprietário).
+  Future<Failure?> deletePlan(String planId);
 
   // ── Assinaturas ───────────────────────────────────────────────────────────
 
@@ -27,6 +33,12 @@ abstract interface class IMembershipRepository {
     required String clientName,
     required String shopId,
     required String planId,
+  });
+
+  /// Faz upgrade/troca de plano de uma assinatura existente.
+  Future<(MembershipEntity?, Failure?)> upgradeMembership({
+    required String membershipId,
+    required String newPlanId,
   });
 
   /// Cancela uma assinatura.

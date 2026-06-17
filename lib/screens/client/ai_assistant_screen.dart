@@ -1,15 +1,27 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import '../../models/app_data_provider.dart';
-import '../../models/barbershop_model.dart';
-import '../../models/service_model.dart';
-import '../../core/routes/app_routes.dart';
+import '../../core/services/barberhub_context_service.dart';
+import '../../core/services/groq_service.dart';
+import '../../data/supabase_ai_settings_datasource.dart';
 import '../../theme/app_theme.dart';
 
 class AiAssistantScreen extends StatefulWidget {
-  const AiAssistantScreen({super.key});
+  /// Só o ADM pode configurar (API key/modelo) — o cliente apenas conversa.
+  final bool canConfigure;
+
+  /// false quando a tela é embutida como aba (ex: dentro do AdminShell),
+  /// onde "voltar" não deve fechar a seção inteira.
+  final bool showBackButton;
+
+  const AiAssistantScreen({
+    super.key,
+    this.canConfigure = false,
+    this.showBackButton = true,
+  });
 
   @override
   State<AiAssistantScreen> createState() => _AiAssistantScreenState();
@@ -18,16 +30,24 @@ class AiAssistantScreen extends StatefulWidget {
 class _AiAssistantScreenState extends State<AiAssistantScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
-  _AssistantIntent _lastIntent = _AssistantIntent.none;
-  bool _isTyping = false;
-  bool _isSendActive = false;
 
+  String _apiKey = '';
+  String _model = GroqService.defaultModel;
+  late final GroqService _ollama = GroqService(apiKey: _apiKey, model: _model);
+
+  bool _isTyping = false;
+  bool _isStreaming = false;
+  bool _isSendActive = false;
+  bool _contextLoaded = false;
+  bool _contextHasData = false;
+  String? _contextError;
+  StreamSubscription<String>? _currentStream;
+
+  final List<Map<String, String>> _history = [];
   final List<_ChatMessage> _messages = [
-    const _ChatMessage.assistant(
-      _AssistantReply(
-        text:
-            'Olá! Sou o assistente do Barber Hub. Posso recomendar serviços, barbearias, barbeiros e produtos — ou te ajudar a iniciar um agendamento. O que você procura?',
-      ),
+    _ChatMessage.assistant(
+      'Olá! Sou o Barber IA, seu assistente do Barber Hub. '
+      'Posso ajudar com dicas de corte, barba, produtos e como usar o app. O que você precisa?',
     ),
   ];
 
@@ -38,17 +58,87 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
       final active = _controller.text.trim().isNotEmpty;
       if (active != _isSendActive) setState(() => _isSendActive = active);
     });
+    _loadSettings();
+    _loadContext();
+  }
+
+  Future<void> _loadContext() async {
+    if (!mounted) return;
+    setState(() {
+      _contextLoaded = false;
+      _contextHasData = false;
+      _contextError = null;
+    });
+    final result = await BarberhubContextService.build();
+    if (!mounted) return;
+    setState(() {
+      _ollama.context = result.context;
+      _contextLoaded = true;
+      _contextHasData = result.context.isNotEmpty;
+      _contextError = result.error;
+    });
+  }
+
+  final _aiSettingsDatasource = SupabaseAiSettingsDatasource();
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    var apiKey = prefs.getString('groq_api_key') ?? '';
+    var model = prefs.getString('groq_model') ?? GroqService.defaultModel;
+
+    if (_aiSettingsDatasource.isConfigured) {
+      try {
+        final remote = await _aiSettingsDatasource.load();
+        if (remote != null && remote.apiKey.isNotEmpty) {
+          apiKey = remote.apiKey;
+          model = remote.model.isEmpty ? model : remote.model;
+          await prefs.setString('groq_api_key', apiKey);
+          await prefs.setString('groq_model', model);
+        }
+      } catch (_) {
+        // mantém o cache local em caso de falha de rede
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _apiKey = apiKey;
+      _model = model;
+      _ollama.apiKey = apiKey;
+      _ollama.model = model;
+    });
+  }
+
+  Future<void> _saveSettings(String apiKey, String model) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('groq_api_key', apiKey);
+    await prefs.setString('groq_model', model);
+    if (_aiSettingsDatasource.isConfigured) {
+      try {
+        await _aiSettingsDatasource.save(apiKey: apiKey, model: model);
+      } catch (_) {
+        // configuração local já foi salva; tenta novamente na próxima sincronização
+      }
+    }
+    setState(() {
+      _apiKey = apiKey;
+      _model = model;
+      _ollama.apiKey = apiKey;
+      _ollama.model = model;
+    });
   }
 
   @override
   void dispose() {
+    _currentStream?.cancel();
+    _ollama.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _send(AppDataProvider data, [String? shortcut]) async {
-    if (_isTyping) return;
+  Future<void> _send([String? shortcut]) async {
+    if (_isTyping || _isStreaming) return;
     final text = (shortcut ?? _controller.text).trim();
     if (text.isEmpty) return;
     _controller.clear();
@@ -57,17 +147,64 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
       _messages.add(_ChatMessage.user(text));
       _isTyping = true;
     });
+    _history.add({'role': 'user', 'content': text});
     _scrollToBottom();
 
-    final reply = _answerFor(text, data);
-    await Future.delayed(const Duration(milliseconds: 750));
-    if (!mounted) return;
+    final assistantMsg = _ChatMessage.assistant('');
+    bool isFirstChunk = true;
+    final buffer = StringBuffer();
 
-    setState(() {
-      _isTyping = false;
-      _messages.add(_ChatMessage.assistant(reply));
-    });
-    _scrollToBottom();
+    try {
+      _currentStream = _ollama.chat(List.from(_history)).listen(
+        (chunk) {
+          buffer.write(chunk);
+          if (isFirstChunk) {
+            isFirstChunk = false;
+            setState(() {
+              _isTyping = false;
+              _isStreaming = true;
+              _messages.add(assistantMsg);
+            });
+          }
+          setState(() => assistantMsg.text = buffer.toString());
+          _scrollToBottom();
+        },
+        onDone: () {
+          if (isFirstChunk) {
+            setState(() {
+              _isTyping = false;
+              _isStreaming = false;
+              _messages.add(_ChatMessage.assistant('(Sem resposta do modelo)'));
+            });
+            return;
+          }
+          _history.add({'role': 'assistant', 'content': buffer.toString()});
+          if (_history.length > 20) _history.removeRange(0, _history.length - 20);
+          setState(() => _isStreaming = false);
+        },
+        onError: (error) {
+          final msg = error is Exception
+              ? error.toString().replaceFirst('Exception: ', '')
+              : 'Erro de conexão. Toque em ⚙️ e use "Testar conexão".';
+          setState(() {
+            _isTyping = false;
+            _isStreaming = false;
+            if (isFirstChunk) {
+              _messages.add(_ChatMessage.assistant(msg));
+            }
+          });
+        },
+        cancelOnError: true,
+      );
+    } catch (_) {
+      setState(() {
+        _isTyping = false;
+        _isStreaming = false;
+        _messages.add(_ChatMessage.assistant(
+          'Erro ao conectar ao Ollama. Toque no ⚙️ para verificar as configurações.',
+        ));
+      });
+    }
   }
 
   void _scrollToBottom() {
@@ -81,527 +218,39 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
     });
   }
 
-  _AssistantReply _answerFor(String rawText, AppDataProvider data) {
-    final text = _normalize(rawText);
-    final shops = data.barbershops;
-    final openShops = shops.where((s) => s.isOpen).toList();
-    final allServices = shops.expand((s) => s.services).toList();
-    final allBarbers = shops.expand((s) => s.barbers).toList();
-    final allProducts = shops.expand((s) => s.products).toList();
-
-    if (_hasAny(text, [
-      'tchau',
-      'ate logo',
-      'ate mais',
-      'bye',
-      'valeu',
-      'obrigado',
-      'obrigada'
-    ])) {
-      return _reply(
-        _AssistantIntent.none,
-        text: _hasAny(text, ['obrigado', 'obrigada', 'valeu'])
-            ? 'Fico feliz em ajudar! Se precisar de mais alguma coisa, é só chamar.'
-            : 'Até logo! Qualquer dúvida, estou aqui.',
-      );
-    }
-
-    if (_hasAny(
-        text, ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'hey', 'eai', 'e ai'])) {
-      return _reply(
-        _AssistantIntent.none,
-        text:
-            'Olá! Me diga o que você procura. Posso ajudar com corte, barba, degradê, produto, barbearia aberta, preço ou assinatura.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'mais barato',
-      'barato',
-      'economizar',
-      'menor preco',
-      'em conta',
-      'acessivel',
-      'custo baixo',
-    ])) {
-      final scoped = _servicesForLastIntent(allServices);
-      final ranked =
-          List<ServiceModel>.from(scoped.isEmpty ? allServices : scoped)
-            ..sort((a, b) => a.price.compareTo(b.price));
-      return _serviceReply(
-        ranked,
-        shops,
-        _lastIntent,
-        intro: _lastIntent == _AssistantIntent.none
-            ? 'Separei as opções mais baratas disponíveis:'
-            : 'Dentro do que você estava procurando, estas são as mais baratas:',
-        fallback: 'Não encontrei serviços para comparar preços agora.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'rapido',
-      'rapida',
-      'sem demora',
-      'pouco tempo',
-      'intervalo',
-      'correndo',
-      'express',
-      'urgente',
-    ])) {
-      final ranked = List<ServiceModel>.from(allServices)
-        ..sort((a, b) => a.durationMinutes.compareTo(b.durationMinutes));
-      return _serviceReply(
-        ranked,
-        shops,
-        _AssistantIntent.quick,
-        intro: 'Para resolver rápido, os serviços de menor duração:',
-        fallback: 'Não encontrei serviços rápidos cadastrados.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'completo',
-      'pacote',
-      'combo',
-      'caprichado',
-      'dia de trato',
-      'tudo junto',
-      'kit',
-    ])) {
-      final matches = _servicesContaining(
-          allServices, ['combo', 'corte + barba', 'barba', 'completo']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.complete,
-        intro: 'Para um atendimento completo, estas opções fazem mais sentido:',
-        fallback:
-            'Para um pacote completo, procure Corte + Barba ou serviços combinados.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'entrevista',
-      'reuniao',
-      'formal',
-      'social',
-      'arrumado',
-      'alinhado',
-      'casamento',
-      'formatura',
-      'evento',
-    ])) {
-      final matches =
-          _servicesContaining(allServices, ['classico', 'corte', 'barba']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.interview,
-        intro: 'Para entrevista ou evento formal, algo limpo e alinhado:',
-        fallback:
-            'Para ocasiões formais, recomendo um corte clássico ou corte + barba.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'aberta',
-      'aberto',
-      'funcionando',
-      'atende agora',
-      'aberta agora',
-      'disponivel',
-    ])) {
-      if (openShops.isEmpty) {
-        return _reply(_AssistantIntent.shop,
-            text: 'No momento não encontrei barbearias abertas no app.');
-      }
-      return _reply(
-        _AssistantIntent.shop,
-        text: 'Barbearias abertas agora:',
-        shops: openShops.take(3).toList(),
-      );
-    }
-
-    if (_hasAny(text, [
-      'melhor',
-      'avaliada',
-      'avaliacao',
-      'top',
-      'recomenda barbearia',
-      'mais bem avaliada',
-      'destaque',
-    ])) {
-      final ranked = List<BarbershopModel>.from(shops)
-        ..sort((a, b) => b.rating.compareTo(a.rating));
-      return _reply(
-        _AssistantIntent.shop,
-        text: 'Melhores barbearias pelas avaliações:',
-        shops: ranked.take(3).toList(),
-      );
-    }
-
-    if (_hasAny(text, [
-      'barba',
-      'bigode',
-      'barba alinhada',
-      'navalha',
-      'apara barba',
-      'fazer barba',
-    ])) {
-      final matches =
-          _servicesContaining(allServices, ['barba', 'bigode', 'navalha']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.beard,
-        intro: 'Para barba, estas opções combinam melhor:',
-        fallback:
-            'Para barba, procure Barba Completa, Barba Estilizada ou Corte + Barba.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'degrade',
-      'moderno',
-      'visual',
-      'mudar visual',
-      'tapa no visual',
-      'dar um trato',
-      'novo visual',
-      'estilo',
-    ])) {
-      final matches =
-          _servicesContaining(allServices, ['degrade', 'moderno', 'corte']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.style,
-        intro: 'Para renovar o visual, estas opções são boas pedidas:',
-        fallback:
-            'Para mudar o visual, recomendo Degradê, Corte Moderno ou Corte + Barba.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'corte',
-      'cabelo',
-      'cortar',
-      'aparar',
-      'cabelo curto',
-      'franja',
-    ])) {
-      final matches = _servicesContaining(allServices, ['corte', 'degrade']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.haircut,
-        intro: 'Para corte de cabelo, estes serviços são bons começos:',
-        fallback:
-            'Para corte de cabelo, comece por Corte Clássico, Corte Moderno ou Degradê.',
-      );
-    }
-
-    if (_hasAny(
-        text, ['preco', 'valor', 'quanto custa', 'quanto e', 'quanto fica', 'tabela'])) {
-      final scoped = _servicesForLastIntent(allServices);
-      final ranked =
-          List<ServiceModel>.from(scoped.isEmpty ? allServices : scoped)
-            ..sort((a, b) => a.price.compareTo(b.price));
-      return _serviceReply(
-        ranked,
-        shops,
-        _lastIntent,
-        intro: _lastIntent == _AssistantIntent.none
-            ? 'Serviços disponíveis por preço:'
-            : 'Com base na sua busca, estes são os valores:',
-        fallback: 'Não encontrei serviços cadastrados para comparar preços.',
-      );
-    }
-
-    if (_hasAny(
-        text, ['barbeiro', 'profissional', 'quem atende', 'especialista', 'equipe'])) {
-      final ranked = allBarbers.where((b) => b.isActive).toList()
-        ..sort((a, b) => b.rating.compareTo(a.rating));
-      if (ranked.isEmpty) {
-        return _reply(_AssistantIntent.barber,
-            text: 'Não encontrei barbeiros ativos no momento.');
-      }
-      return _reply(
-        _AssistantIntent.barber,
-        text:
-            'Barbeiros em destaque:\n\n${ranked.take(5).map((b) => '• ${b.name} — ${b.specialty}, ★ ${b.rating.toStringAsFixed(1)}').join('\n')}',
-      );
-    }
-
-    if (_hasAny(text, [
-      'crianca',
-      'filho',
-      'infantil',
-      'menino',
-      'kid',
-      'bebe',
-    ])) {
-      final matches = _servicesContaining(
-          allServices, ['infantil', 'crianca', 'junior', 'kids']);
-      return _serviceReply(
-        matches,
-        shops,
-        _AssistantIntent.haircut,
-        intro: 'Serviços para crianças disponíveis:',
-        fallback:
-            'Para crianças, verifique nas barbearias se há serviço infantil disponível.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'endereco',
-      'onde fica',
-      'localizacao',
-      'como chegar',
-      'perto',
-      'proximo',
-      'bairro',
-    ])) {
-      final ranked = List<BarbershopModel>.from(shops)
-        ..sort((a, b) => b.rating.compareTo(a.rating));
-      return _reply(
-        _AssistantIntent.shop,
-        text: 'Barbearias com endereço:',
-        shops: ranked.take(3).toList(),
-      );
-    }
-
-    if (_hasAny(text, [
-      'horario',
-      'que horas',
-      'abre',
-      'fecha',
-      'funciona',
-      'expediente',
-      'domingo',
-      'sabado',
-    ])) {
-      if (openShops.isNotEmpty) {
-        return _reply(
-          _AssistantIntent.shop,
-          text:
-              'Estas barbearias estão abertas agora. Acesse cada uma para ver o horário completo:',
-          shops: openShops.take(3).toList(),
-        );
-      }
-      final ranked = List<BarbershopModel>.from(shops)
-        ..sort((a, b) => b.rating.compareTo(a.rating));
-      return _reply(
-        _AssistantIntent.shop,
-        text: 'Para ver o horário de funcionamento, selecione uma barbearia:',
-        shops: ranked.take(3).toList(),
-      );
-    }
-
-    if (_hasAny(
-        text, ['pagamento', 'pagar', 'pix', 'cartao', 'dinheiro', 'parcel'])) {
-      return _reply(
-        _AssistantIntent.none,
-        text:
-            'As formas de pagamento variam por barbearia. Acesse a página de cada barbearia para ver as opções disponíveis.',
-      );
-    }
-
-    if (_hasAny(text, [
-      'produto',
-      'pomada',
-      'shampoo',
-      'comprar',
-      'loja',
-      'presente',
-      'pai',
-      'condicionador',
-      'cera',
-      'gel',
-    ])) {
-      final available = allProducts.where((p) => p.isAvailable).toList();
-      if (available.isEmpty) {
-        return _reply(_AssistantIntent.product,
-            text: 'Não encontrei produtos disponíveis no momento.');
-      }
-      final intro = _hasAny(text, ['presente', 'pai'])
-          ? 'Para presente, estes produtos são ótimas opções:'
-          : 'Produtos que podem combinar com você:';
-      return _reply(
-        _AssistantIntent.product,
-        text: intro,
-        products: available.take(4).toList(),
-        productShops: shops,
-      );
-    }
-
-    if (_hasAny(text, [
-      'assinatura',
-      'plano',
-      'mensal',
-      'vip',
-      'premium',
-      'fidelidade',
-      'clube',
-    ])) {
-      return _reply(
-        _AssistantIntent.membership,
-        text:
-            'O app tem uma área de Assinatura. Se você corta cabelo com frequência, um plano mensal pode compensar bastante — acesso prioritário e preços especiais.',
-        actionLabel: 'Ver assinatura',
-        onAction: (context, data) => Navigator.pop(context),
-      );
-    }
-
-    if (_hasAny(text, [
-      'agenda',
-      'agendar',
-      'marcar',
-      'reservar',
-      'quero cortar',
-      'quero fazer',
-    ])) {
-      final suggestion =
-          openShops.isNotEmpty ? openShops.first : (shops.isNotEmpty ? shops.first : null);
-      if (suggestion == null) {
-        return _reply(_AssistantIntent.booking,
-            text:
-                'Não encontrei barbearias cadastradas para iniciar um agendamento.');
-      }
-      return _reply(
-        _AssistantIntent.booking,
-        text:
-            'Ótimo! Comece por esta barbearia e toque em "Agendar" no serviço desejado:',
-        shops: [suggestion],
-      );
-    }
-
-    if (_hasAny(text, ['cancelar', 'remarcar', 'desmarcar', 'alterar agendamento'])) {
-      return _reply(
-        _AssistantIntent.none,
-        text:
-            'Para cancelar ou remarcar, vá em "Meus Agendamentos" no menu principal e selecione o agendamento desejado.',
-      );
-    }
-
-    if (_hasAny(
-        text, ['nao sei', 'duvida', 'me ajuda', 'indica algo', 'recomenda algo', 'o que voce faz'])) {
-      return _reply(
-        _AssistantIntent.none,
-        text:
-            'Claro! Para eu recomendar melhor, me diga se você quer algo:\n\n• Rápido ou mais barato\n• Completo (combo)\n• Para barba ou para mudar o visual\n• Para uma entrevista ou evento\n• Um produto para comprar',
-      );
-    }
-
-    return _reply(
-      _AssistantIntent.none,
-      text:
-          'Ainda estou aprendendo sobre esse pedido. Tente perguntar sobre: corte, barba, degradê, preço, barbearia aberta, barbeiro, produto, assinatura ou agendamento.',
+  void _showSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: SingleChildScrollView(
+          child: _SettingsSheet(
+            initialApiKey: _apiKey,
+            initialModel: _model,
+            onSave: (apiKey, model) async {
+              await _saveSettings(apiKey, model);
+            },
+          ),
+        ),
+      ),
     );
-  }
-
-  _AssistantReply _reply(
-    _AssistantIntent intent, {
-    required String text,
-    List<BarbershopModel> shops = const [],
-    List<ServiceModel> services = const [],
-    List<BarbershopModel> serviceShops = const [],
-    List<ProductModel> products = const [],
-    List<BarbershopModel> productShops = const [],
-    String? actionLabel,
-    _AssistantAction? onAction,
-  }) {
-    _lastIntent = intent;
-    return _AssistantReply(
-      text: text,
-      shops: shops,
-      services: services,
-      serviceShops: serviceShops,
-      products: products,
-      productShops: productShops,
-      actionLabel: actionLabel,
-      onAction: onAction,
-    );
-  }
-
-  _AssistantReply _serviceReply(
-    List<ServiceModel> services,
-    List<BarbershopModel> shops,
-    _AssistantIntent intent, {
-    String intro = 'Com base nos serviços cadastrados, eu recomendo:',
-    required String fallback,
-  }) {
-    if (services.isEmpty) return _reply(intent, text: fallback);
-    return _reply(
-      intent,
-      text: intro,
-      services: services.take(4).toList(),
-      serviceShops: shops,
-    );
-  }
-
-  List<ServiceModel> _servicesForLastIntent(List<ServiceModel> services) {
-    switch (_lastIntent) {
-      case _AssistantIntent.beard:
-        return _servicesContaining(services, ['barba', 'bigode', 'navalha']);
-      case _AssistantIntent.haircut:
-        return _servicesContaining(services, ['corte', 'degrade']);
-      case _AssistantIntent.style:
-        return _servicesContaining(services, ['degrade', 'moderno', 'corte']);
-      case _AssistantIntent.complete:
-        return _servicesContaining(
-            services, ['combo', 'corte + barba', 'barba']);
-      case _AssistantIntent.interview:
-        return _servicesContaining(services, ['classico', 'corte', 'barba']);
-      case _AssistantIntent.quick:
-        return List<ServiceModel>.from(services)
-          ..sort((a, b) => a.durationMinutes.compareTo(b.durationMinutes));
-      default:
-        return const [];
-    }
-  }
-
-  bool _hasAny(String text, List<String> terms) =>
-      terms.any((t) => text.contains(_normalize(t)));
-
-  String _normalize(String value) => value
-      .toLowerCase()
-      .replaceAll('á', 'a')
-      .replaceAll('à', 'a')
-      .replaceAll('ã', 'a')
-      .replaceAll('â', 'a')
-      .replaceAll('é', 'e')
-      .replaceAll('ê', 'e')
-      .replaceAll('í', 'i')
-      .replaceAll('ó', 'o')
-      .replaceAll('õ', 'o')
-      .replaceAll('ô', 'o')
-      .replaceAll('ú', 'u')
-      .replaceAll('ç', 'c');
-
-  List<ServiceModel> _servicesContaining(
-    List<ServiceModel> services,
-    List<String> terms,
-  ) {
-    return services.where((s) {
-      final hay = _normalize('${s.name} ${s.description}');
-      return terms.any((t) => hay.contains(_normalize(t)));
-    }).toList()
-      ..sort((a, b) => a.price.compareTo(b.price));
   }
 
   @override
   Widget build(BuildContext context) {
-    final data = context.watch<AppDataProvider>();
-
+    final busy = _isTyping || _isStreaming;
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Column(
           children: [
             _buildHeader(context),
-            _buildChips(data),
+            _buildChips(),
             Expanded(
               child: ListView.builder(
                 controller: _scrollController,
@@ -611,18 +260,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
                   if (_isTyping && index == _messages.length) {
                     return const _TypingIndicator();
                   }
-                  return _Bubble(
-                    message: _messages[index],
-                    data: data,
-                  );
+                  return _Bubble(message: _messages[index]);
                 },
               ),
             ),
             _InputBar(
               controller: _controller,
-              isSendActive: _isSendActive,
-              isTyping: _isTyping,
-              onSend: () => _send(data),
+              isSendActive: _isSendActive && !busy,
+              isTyping: busy,
+              onSend: () => _send(),
             ),
           ],
         ),
@@ -632,14 +278,15 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
 
   Widget _buildHeader(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 12, 20, 8),
+      padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
       child: Row(
         children: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_rounded),
-            color: AppTheme.textPrimary,
-          ),
+          if (widget.showBackButton)
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.arrow_back_rounded),
+              color: AppTheme.textPrimary,
+            ),
           Container(
             width: 40,
             height: 40,
@@ -651,45 +298,91 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
                 color: AppTheme.background, size: 20),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Barber IA',
-                style: GoogleFonts.jost(
-                  color: AppTheme.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Barber IA',
+                  style: GoogleFonts.jost(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF4CAF50),
-                      shape: BoxShape.circle,
+                Row(
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF4CAF50),
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Online',
-                    style: GoogleFonts.jost(
-                      color: AppTheme.textSecondary,
-                      fontSize: 11,
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        'Groq · $_model',
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.jost(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 6),
+                    if (!_contextLoaded)
+                      const SizedBox(
+                        width: 9,
+                        height: 9,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          color: AppTheme.gold,
+                        ),
+                      )
+                    else if (_contextHasData)
+                      const Tooltip(
+                        message: 'Dados do app carregados',
+                        child: Icon(
+                          Icons.storage_rounded,
+                          size: 11,
+                          color: AppTheme.gold,
+                        ),
+                      )
+                    else
+                      Tooltip(
+                        message: _contextError ?? 'Sem dados do banco',
+                        child: const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 12,
+                          color: Colors.orange,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
+          IconButton(
+            onPressed: _contextLoaded ? _loadContext : null,
+            icon: const Icon(Icons.sync_rounded),
+            color: _contextLoaded ? AppTheme.textSecondary : AppTheme.inputBorder,
+            tooltip: 'Atualizar dados do app',
+          ),
+          if (widget.canConfigure)
+            IconButton(
+              onPressed: _showSettings,
+              icon: const Icon(Icons.settings_outlined),
+              color: AppTheme.textSecondary,
+              tooltip: 'Configurações da IA',
+            ),
         ],
       ),
     );
   }
 
-  Widget _buildChips(AppDataProvider data) {
+  Widget _buildChips() {
     return SizedBox(
       height: 42,
       child: ListView(
@@ -699,37 +392,32 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
           _PromptChip(
             label: 'Entrevista',
             icon: Icons.work_outline_rounded,
-            onTap: () => _send(data, 'Tenho uma entrevista amanhã'),
+            onTap: () => _send('Qual estilo de cabelo combina para uma entrevista de emprego?'),
           ),
           _PromptChip(
-            label: 'Rápido',
-            icon: Icons.bolt_rounded,
-            onTap: () => _send(data, 'Quero algo rápido'),
+            label: 'Degradê',
+            icon: Icons.content_cut_rounded,
+            onTap: () => _send('Me explica os tipos de degradê e qual combina mais com rosto redondo'),
           ),
           _PromptChip(
-            label: 'Barato',
-            icon: Icons.savings_outlined,
-            onTap: () => _send(data, 'Me indica algo barato'),
-          ),
-          _PromptChip(
-            label: 'Completo',
-            icon: Icons.spa_outlined,
-            onTap: () => _send(data, 'Quero um pacote completo'),
+            label: 'Barba',
+            icon: Icons.face_rounded,
+            onTap: () => _send('Dicas para cuidar e hidratar a barba'),
           ),
           _PromptChip(
             label: 'Produtos',
             icon: Icons.shopping_bag_outlined,
-            onTap: () => _send(data, 'Me recomenda produtos'),
+            onTap: () => _send('Que produtos masculinos usar no cabelo e barba?'),
           ),
           _PromptChip(
-            label: 'Aberta agora',
-            icon: Icons.store_outlined,
-            onTap: () => _send(data, 'Barbearia aberta agora'),
+            label: 'Agendar',
+            icon: Icons.calendar_month_outlined,
+            onTap: () => _send('Como faço para agendar um serviço no Barber Hub?'),
           ),
           _PromptChip(
-            label: 'Melhor nota',
-            icon: Icons.star_outline_rounded,
-            onTap: () => _send(data, 'Qual a melhor barbearia'),
+            label: 'Tendências',
+            icon: Icons.trending_up_rounded,
+            onTap: () => _send('Quais são as tendências de corte masculino em 2025?'),
           ),
         ],
       ),
@@ -737,60 +425,406 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
   }
 }
 
-// ─── Enums & Data ────────────────────────────────────────────────────────────
-
-enum _AssistantIntent {
-  none,
-  shop,
-  barber,
-  beard,
-  haircut,
-  style,
-  complete,
-  interview,
-  quick,
-  product,
-  membership,
-  booking,
-}
-
-typedef _AssistantAction = void Function(
-    BuildContext context, AppDataProvider data);
-
-class _AssistantReply {
-  final String text;
-  final List<BarbershopModel> shops;
-  final List<ServiceModel> services;
-  final List<BarbershopModel> serviceShops;
-  final List<ProductModel> products;
-  final List<BarbershopModel> productShops;
-  final String? actionLabel;
-  final _AssistantAction? onAction;
-
-  const _AssistantReply({
-    required this.text,
-    this.shops = const [],
-    this.services = const [],
-    this.serviceShops = const [],
-    this.products = const [],
-    this.productShops = const [],
-    this.actionLabel,
-    this.onAction,
-  });
-}
+// ─── Message Model ─────────────────────────────────────────────────────────────
 
 class _ChatMessage {
   final bool isUser;
-  final String? text;
-  final _AssistantReply? reply;
+  String text;
 
-  const _ChatMessage.user(this.text)
-      : isUser = true,
-        reply = null;
+  _ChatMessage.user(this.text) : isUser = true;
+  _ChatMessage.assistant(this.text) : isUser = false;
+}
 
-  const _ChatMessage.assistant(this.reply)
-      : isUser = false,
-        text = null;
+// ─── Settings Sheet ───────────────────────────────────────────────────────────
+
+class _SettingsSheet extends StatefulWidget {
+  final String initialApiKey;
+  final String initialModel;
+  final Future<void> Function(String apiKey, String model) onSave;
+
+  const _SettingsSheet({
+    required this.initialApiKey,
+    required this.initialModel,
+    required this.onSave,
+  });
+
+  @override
+  State<_SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<_SettingsSheet> {
+  late final TextEditingController _apiKeyCtrl;
+  late final TextEditingController _modelCtrl;
+  bool _saving = false;
+  bool _testing = false;
+  bool? _testResult;
+  bool _tutorialExpanded = false;
+  bool _obscureKey = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _apiKeyCtrl = TextEditingController(text: widget.initialApiKey);
+    _modelCtrl = TextEditingController(text: widget.initialModel);
+  }
+
+  @override
+  void dispose() {
+    _apiKeyCtrl.dispose();
+    _modelCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final apiKey = _apiKeyCtrl.text.trim();
+    final model = _modelCtrl.text.trim();
+    if (model.isEmpty) return;
+    setState(() => _saving = true);
+    await widget.onSave(apiKey, model);
+    if (mounted) Navigator.pop(context);
+  }
+
+  Future<void> _testConnection() async {
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
+    final tmp = GroqService(
+      apiKey: _apiKeyCtrl.text.trim(),
+      model: _modelCtrl.text.trim(),
+    );
+    final ok = await tmp.isAvailable();
+    tmp.dispose();
+    if (mounted) {
+      setState(() {
+        _testing = false;
+        _testResult = ok;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: AppTheme.inputBorder,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Text(
+            'Configurações da IA',
+            style: GoogleFonts.jost(
+              color: AppTheme.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 20),
+          _fieldLabel('API Key da Groq'),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _apiKeyCtrl,
+            obscureText: _obscureKey,
+            style: GoogleFonts.jost(color: AppTheme.textPrimary, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'gsk_...',
+              prefixIcon: const Icon(Icons.key_rounded,
+                  color: AppTheme.textSecondary, size: 18),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscureKey
+                      ? Icons.visibility_outlined
+                      : Icons.visibility_off_outlined,
+                  color: AppTheme.textSecondary,
+                  size: 18,
+                ),
+                onPressed: () => setState(() => _obscureKey = !_obscureKey),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _fieldLabel('Modelo'),
+          const SizedBox(height: 6),
+          _textField(_modelCtrl, 'llama-3.1-8b-instant', Icons.psychology_outlined),
+          const SizedBox(height: 8),
+          Text(
+            'Outros modelos: llama-3.3-70b-versatile, gemma2-9b-it',
+            style: GoogleFonts.jost(color: AppTheme.textSecondary, fontSize: 11),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.check_rounded, size: 18),
+              label: Text(_saving ? 'Salvando...' : 'Salvar configurações'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _testing ? null : _testConnection,
+                  icon: _testing
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.wifi_find_rounded, size: 16),
+                  label: Text(_testing ? 'Testando...' : 'Testar conexão'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.gold,
+                    side: const BorderSide(color: AppTheme.gold),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              if (_testResult != null) ...[
+                const SizedBox(width: 12),
+                Icon(
+                  _testResult! ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                  color: _testResult! ? const Color(0xFF4CAF50) : Colors.redAccent,
+                  size: 22,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _testResult! ? 'Conectado!' : 'Chave inválida',
+                  style: GoogleFonts.jost(
+                    color: _testResult!
+                        ? const Color(0xFF4CAF50)
+                        : Colors.redAccent,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: () => launchUrl(
+              Uri.parse('https://console.groq.com/keys'),
+              mode: LaunchMode.externalApplication,
+            ),
+            icon: const Icon(Icons.open_in_new_rounded, size: 14),
+            label: const Text('Criar API Key gratuita no Groq'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.gold,
+              textStyle: GoogleFonts.jost(fontSize: 12),
+              padding: EdgeInsets.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Divider(color: AppTheme.divider),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: () => setState(() => _tutorialExpanded = !_tutorialExpanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  const Icon(Icons.help_outline_rounded,
+                      color: AppTheme.gold, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Como obter sua API Key gratuita',
+                      style: GoogleFonts.jost(
+                        color: AppTheme.gold,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _tutorialExpanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: AppTheme.gold,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_tutorialExpanded) ...[
+            const SizedBox(height: 16),
+            _tutorialStep(
+              '1',
+              'Acesse o Groq',
+              'Toque em "Criar API Key gratuita no Groq" acima\nou acesse console.groq.com',
+            ),
+            _tutorialStep(
+              '2',
+              'Crie uma conta gratuita',
+              'Faça login com Google ou crie uma conta.\nNenhum cartão de crédito necessário.',
+            ),
+            _tutorialStep(
+              '3',
+              'Gere a API Key',
+              'Vá em "API Keys" → "Create API Key".\nCopie a chave (começa com gsk_...).',
+            ),
+            _tutorialStep(
+              '4',
+              'Cole no campo acima',
+              'Cole a chave no campo "API Key da Groq"\ne toque em "Salvar configurações".',
+            ),
+            const SizedBox(height: 4),
+            _tipBox(
+              'Gratuito e sem cartão',
+              'O plano gratuito permite até 30 req/min e 14.400 req/dia — mais que suficiente para uso normal do app.',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _fieldLabel(String text) {
+    return Text(
+      text,
+      style: GoogleFonts.jost(
+        color: AppTheme.textSecondary,
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.4,
+      ),
+    );
+  }
+
+  Widget _textField(
+      TextEditingController ctrl, String hint, IconData prefixIcon) {
+    return TextField(
+      controller: ctrl,
+      style: GoogleFonts.jost(color: AppTheme.textPrimary, fontSize: 14),
+      decoration: InputDecoration(
+        hintText: hint,
+        prefixIcon: Icon(prefixIcon, color: AppTheme.textSecondary, size: 18),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      ),
+    );
+  }
+
+  Widget _tutorialStep(String num, String title, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: const BoxDecoration(
+              color: AppTheme.gold,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                num,
+                style: GoogleFonts.jost(
+                  color: AppTheme.background,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.jost(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  body,
+                  style: GoogleFonts.jost(
+                    color: AppTheme.textSecondary,
+                    fontSize: 12,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tipBox(String title, String body) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.gold.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.gold.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lightbulb_outline_rounded,
+                  color: AppTheme.gold, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: GoogleFonts.jost(
+                  color: AppTheme.gold,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            body,
+            style: GoogleFonts.jost(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ─── Typing Indicator ─────────────────────────────────────────────────────────
@@ -884,9 +918,8 @@ class _TypingIndicatorState extends State<_TypingIndicator>
 
 class _Bubble extends StatefulWidget {
   final _ChatMessage message;
-  final AppDataProvider data;
 
-  const _Bubble({required this.message, required this.data});
+  const _Bubble({required this.message});
 
   @override
   State<_Bubble> createState() => _BubbleState();
@@ -924,45 +957,42 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
       opacity: _opacity,
       child: SlideTransition(
         position: _slide,
-        child: _buildContent(context),
+        child: widget.message.isUser ? _userBubble() : _assistantBubble(),
       ),
     );
   }
 
-  Widget _buildContent(BuildContext context) {
-    final isUser = widget.message.isUser;
-    final reply = widget.message.reply;
-
-    if (isUser) {
-      return Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
-          ),
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: const BoxDecoration(
-            color: AppTheme.gold,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(12),
-              topRight: Radius.circular(12),
-              bottomLeft: Radius.circular(12),
-              bottomRight: Radius.circular(2),
-            ),
-          ),
-          child: Text(
-            widget.message.text ?? '',
-            style: GoogleFonts.jost(
-              color: AppTheme.background,
-              fontSize: 14,
-              height: 1.4,
-            ),
+  Widget _userBubble() {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: const BoxDecoration(
+          color: AppTheme.gold,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+            bottomLeft: Radius.circular(12),
+            bottomRight: Radius.circular(2),
           ),
         ),
-      );
-    }
+        child: Text(
+          widget.message.text,
+          style: GoogleFonts.jost(
+            color: AppTheme.background,
+            fontSize: 14,
+            height: 1.4,
+          ),
+        ),
+      ),
+    );
+  }
 
+  Widget _assistantBubble() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -983,74 +1013,19 @@ class _BubbleState extends State<_Bubble> with SingleTickerProviderStateMixin {
                 ),
                 border: Border.all(color: AppTheme.inputBorder),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    reply?.text ?? '',
-                    style: GoogleFonts.jost(
-                      color: AppTheme.textPrimary,
-                      fontSize: 14,
-                      height: 1.45,
-                    ),
-                  ),
-                  if (reply != null) ...[
-                    if (reply.shops.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      ...reply.shops
-                          .map((s) => _ShopSuggestion(shop: s)),
-                    ],
-                    if (reply.services.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      ...reply.services.map(
-                        (s) => _ServiceSuggestion(
-                          service: s,
-                          shop: _shopForService(reply.serviceShops, s),
-                        ),
-                      ),
-                    ],
-                    if (reply.products.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      ...reply.products.map(
-                        (p) => _ProductSuggestion(
-                          product: p,
-                          shop: _shopForProduct(reply.productShops, p),
-                        ),
-                      ),
-                    ],
-                    if (reply.actionLabel != null && reply.onAction != null) ...[
-                      const SizedBox(height: 12),
-                      _AssistantButton(
-                        icon: Icons.arrow_forward_rounded,
-                        label: reply.actionLabel!,
-                        onTap: () =>
-                            reply.onAction!(context, widget.data),
-                      ),
-                    ],
-                  ],
-                ],
+              child: Text(
+                widget.message.text,
+                style: GoogleFonts.jost(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                  height: 1.45,
+                ),
               ),
             ),
           ),
         ],
       ),
     );
-  }
-
-  BarbershopModel? _shopForService(
-      List<BarbershopModel> shops, ServiceModel service) {
-    for (final s in shops) {
-      if (s.services.any((i) => i.id == service.id)) return s;
-    }
-    return null;
-  }
-
-  BarbershopModel? _shopForProduct(
-      List<BarbershopModel> shops, ProductModel product) {
-    for (final s in shops) {
-      if (s.products.any((i) => i.id == product.id)) return s;
-    }
-    return null;
   }
 }
 
@@ -1076,7 +1051,7 @@ class _AssistantAvatar extends StatelessWidget {
   }
 }
 
-// ─── Prompt Chips ─────────────────────────────────────────────────────────────
+// ─── Prompt Chip ──────────────────────────────────────────────────────────────
 
 class _PromptChip extends StatelessWidget {
   final String label;
@@ -1099,237 +1074,8 @@ class _PromptChip extends StatelessWidget {
         avatar: Icon(icon, size: 15),
         backgroundColor: AppTheme.surfaceElevated,
         side: const BorderSide(color: AppTheme.inputBorder),
-        labelStyle:
-            GoogleFonts.jost(color: AppTheme.textPrimary, fontSize: 12),
+        labelStyle: GoogleFonts.jost(color: AppTheme.textPrimary, fontSize: 12),
         iconTheme: const IconThemeData(color: AppTheme.gold),
-      ),
-    );
-  }
-}
-
-// ─── Suggestion Cards ─────────────────────────────────────────────────────────
-
-class _ShopSuggestion extends StatelessWidget {
-  final BarbershopModel shop;
-  const _ShopSuggestion({required this.shop});
-
-  @override
-  Widget build(BuildContext context) {
-    return _SuggestionCard(
-      icon: Icons.storefront_rounded,
-      title: shop.name,
-      subtitle:
-          '${shop.address}\n★ ${shop.rating.toStringAsFixed(1)} (${shop.reviewCount} avaliações)',
-      trailing: shop.isOpen
-          ? const _StatusBadge(label: 'Aberta', color: Color(0xFF4CAF50))
-          : const _StatusBadge(label: 'Fechada', color: Colors.redAccent),
-      actions: [
-        _AssistantButton(
-          icon: Icons.visibility_outlined,
-          label: 'Ver barbearia',
-          onTap: () {
-            context.read<AppDataProvider>().selectBarbershop(shop);
-            Navigator.pushNamed(
-              context,
-              AppRoutes.barbershopDetail,
-              arguments: shop,
-            );
-          },
-        ),
-      ],
-    );
-  }
-}
-
-class _ServiceSuggestion extends StatelessWidget {
-  final ServiceModel service;
-  final BarbershopModel? shop;
-  const _ServiceSuggestion({required this.service, required this.shop});
-
-  @override
-  Widget build(BuildContext context) {
-    return _SuggestionCard(
-      icon: Icons.content_cut_rounded,
-      title: service.name,
-      subtitle:
-          '${service.formattedPrice} · ${service.formattedDuration}${shop == null ? '' : '\n${shop!.name}'}',
-      actions: [
-        if (shop != null)
-          _AssistantButton(
-            icon: Icons.calendar_month_outlined,
-            label: 'Agendar',
-            onTap: () => Navigator.pushNamed(
-              context,
-              AppRoutes.booking,
-              arguments: {'service': service, 'barbershop': shop},
-            ),
-          ),
-        if (shop != null)
-          _AssistantButton(
-            icon: Icons.storefront_outlined,
-            label: 'Ver loja',
-            onTap: () => Navigator.pushNamed(
-              context,
-              AppRoutes.barbershopDetail,
-              arguments: shop,
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _ProductSuggestion extends StatelessWidget {
-  final ProductModel product;
-  final BarbershopModel? shop;
-  const _ProductSuggestion({required this.product, required this.shop});
-
-  @override
-  Widget build(BuildContext context) {
-    return _SuggestionCard(
-      icon: product.category.iconData,
-      title: product.name,
-      subtitle:
-          '${product.formattedPrice} · ${product.category.label}${shop == null ? '' : '\n${shop!.name}'}',
-      actions: [
-        if (shop != null)
-          _AssistantButton(
-            icon: Icons.shopping_bag_outlined,
-            label: 'Ver produto',
-            onTap: () => Navigator.pushNamed(
-              context,
-              AppRoutes.productDetail,
-              arguments: {'product': product, 'barbershop': shop},
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _StatusBadge extends StatelessWidget {
-  final String label;
-  final Color color;
-  const _StatusBadge({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.jost(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _SuggestionCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<Widget> actions;
-  final Widget? trailing;
-
-  const _SuggestionCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.actions,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppTheme.background.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppTheme.gold.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, color: AppTheme.gold, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.jost(
-                        color: AppTheme.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.jost(
-                        color: AppTheme.textSecondary,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (trailing != null) ...[
-                const SizedBox(width: 8),
-                trailing!,
-              ],
-            ],
-          ),
-          if (actions.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(spacing: 8, runSpacing: 8, children: actions),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// ─── Buttons ──────────────────────────────────────────────────────────────────
-
-class _AssistantButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  const _AssistantButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: onTap,
-      icon: Icon(icon, size: 14),
-      label: Text(label),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppTheme.gold,
-        side: const BorderSide(color: AppTheme.gold),
-        visualDensity: VisualDensity.compact,
-        textStyle: GoogleFonts.jost(fontSize: 12, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -1372,7 +1118,7 @@ class _InputBar extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: isTyping
                     ? 'Aguarde...'
-                    : 'Pergunte sobre serviços, horários, produtos...',
+                    : 'Pergunte sobre corte, barba, produtos...',
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               ),
@@ -1380,13 +1126,13 @@ class _InputBar extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           AnimatedOpacity(
-            opacity: isSendActive && !isTyping ? 1.0 : 0.4,
+            opacity: isSendActive ? 1.0 : 0.4,
             duration: const Duration(milliseconds: 200),
             child: SizedBox(
               width: 46,
               height: 46,
               child: ElevatedButton(
-                onPressed: isSendActive && !isTyping ? onSend : null,
+                onPressed: isSendActive ? onSend : null,
                 style: ElevatedButton.styleFrom(padding: EdgeInsets.zero),
                 child: const Icon(Icons.send_rounded, size: 20),
               ),

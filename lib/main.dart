@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:provider/provider.dart' as provider;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/app_data_provider.dart';
 import 'models/cart_provider.dart';
@@ -13,7 +14,9 @@ import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
 import 'features/auth/presentation/screens/register_screen.dart';
 import 'features/auth/presentation/screens/forgot_password_screen.dart';
+import 'features/auth/presentation/screens/reset_password_screen.dart';
 import 'features/barber_shop/presentation/screens/barber_shop_shell.dart';
+import 'features/barber_shop/presentation/screens/barber_shop_reviews_screen.dart';
 
 // Membership feature
 import 'features/membership/presentation/screens/client/membership_plans_screen.dart';
@@ -29,7 +32,10 @@ import 'screens/client/product_detail_screen.dart';
 import 'screens/client/cart_screen.dart';
 import 'screens/client/review_screen.dart';
 import 'screens/client/ai_assistant_screen.dart';
+import 'screens/client/edit_profile_screen.dart';
 import 'theme/app_theme.dart';
+
+final _navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,9 +45,18 @@ Future<void> main() async {
     statusBarIconBrightness: Brightness.light,
   ));
   await SupabaseService.initialize();
-  runApp(
-    const ProviderScope(child: BarberHubApp()),
-  );
+
+  // Redireciona para a tela de nova senha quando o usuário clica no link do email
+  SupabaseService.client?.auth.onAuthStateChange.listen((data) {
+    if (data.event == AuthChangeEvent.passwordRecovery) {
+      _navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        AppRoutes.resetPassword,
+        (route) => false,
+      );
+    }
+  });
+
+  runApp(const ProviderScope(child: BarberHubApp()));
 }
 
 class BarberHubApp extends StatelessWidget {
@@ -56,77 +71,71 @@ class BarberHubApp extends StatelessWidget {
         provider.ChangeNotifierProvider(create: (_) => OnboardingProvider()),
       ],
       child: MaterialApp(
+          navigatorKey: _navigatorKey,
           title: 'Barber Hub',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.darkTheme,
           initialRoute: AppRoutes.splash,
           onGenerateRoute: (settings) {
-            // Mapa de rotas com builders
             final routeMap = <String, WidgetBuilder>{
               AppRoutes.splash: (_) => const SplashScreen(),
-              // MELHORIA #12: LoginScreen Riverpod.
               AppRoutes.login: (_) => const LoginScreen(),
               AppRoutes.register: (_) => const RegisterScreen(),
               AppRoutes.forgotPassword: (_) => const ForgotPasswordScreen(),
+              AppRoutes.resetPassword: (_) => const ResetPasswordScreen(),
               AppRoutes.home: (_) => MainShell(
-                initialIndex:
-                    settings.arguments is int ? settings.arguments as int : 0,
-              ),
-              // BUG #1 CORRIGIDO: rota barberShopHome adicionada.
+                    initialIndex: settings.arguments is int
+                        ? settings.arguments as int
+                        : 0,
+                  ),
               AppRoutes.barberShopHome: (_) => const BarberShopShell(),
               AppRoutes.barberHome: (_) => const BarberShell(),
               AppRoutes.adminHome: (_) => const AdminShell(),
-              AppRoutes.barbershopDetail: (_) =>
-                  const BarbershopDetailScreen(),
+              AppRoutes.barbershopDetail: (_) => const BarbershopDetailScreen(),
               AppRoutes.serviceDetail: (_) => const ServiceDetailScreen(),
               AppRoutes.booking: (_) => const BookingScreen(),
               AppRoutes.productDetail: (_) => const ProductDetailScreen(),
               AppRoutes.cart: (_) => const CartScreen(),
               AppRoutes.review: (_) => const ReviewScreen(),
               AppRoutes.aiAssistant: (_) => const AiAssistantScreen(),
-              // Membership
+              AppRoutes.editProfile: (_) => const EditProfileScreen(),
               AppRoutes.membershipPlans: (_) => const MembershipPlansScreen(),
               AppRoutes.membershipManagement: (_) =>
                   const MembershipManagementScreen(),
+              AppRoutes.shopReviews: (_) => const BarberShopReviewsScreen(),
             };
 
-            // Buscar rota no mapa
             final builder = routeMap[settings.name];
             if (builder == null) {
-              // Fallback: rota inexistente
               return PageRouteBuilder(
                 settings: settings,
                 pageBuilder: (_, __, ___) => _NotFoundPage(
                   route: settings.name ?? 'desconhecida',
                 ),
-                transitionsBuilder: (_, animation, __, child) =>
-                    FadeTransition(
-                  opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                transitionsBuilder: (_, animation, __, child) => FadeTransition(
+                  opacity:
+                      CurvedAnimation(parent: animation, curve: Curves.easeOut),
                   child: child,
                 ),
                 transitionDuration: const Duration(milliseconds: 280),
               );
             }
 
-            // Construir a página com transição
             return PageRouteBuilder(
               settings: settings,
               pageBuilder: (context, animation, __) => builder(context),
               transitionsBuilder: (_, animation, __, child) => FadeTransition(
-                opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+                opacity:
+                    CurvedAnimation(parent: animation, curve: Curves.easeOut),
                 child: child,
               ),
               transitionDuration: const Duration(milliseconds: 280),
             );
-          },
-        ),
+          }),
     );
   }
-
-  // MELHORIA #8: _buildRoutes() removido - era código morto.
 }
 
-/// Página de erro para rotas não encontradas
 class _NotFoundPage extends StatelessWidget {
   final String route;
 

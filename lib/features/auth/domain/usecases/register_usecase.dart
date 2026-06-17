@@ -20,7 +20,10 @@ class RegisterUseCase {
       return (null, const ValidationFailure('E-mail inválido.'));
     }
     if (password.length < 6) {
-      return (null, const ValidationFailure('Senha deve ter mínimo 6 caracteres.'));
+      return (
+        null,
+        const ValidationFailure('Senha deve ter mínimo 6 caracteres.')
+      );
     }
     if (password != confirmPassword) {
       return (null, const ValidationFailure('As senhas não coincidem.'));

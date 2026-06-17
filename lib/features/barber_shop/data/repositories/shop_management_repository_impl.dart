@@ -30,8 +30,7 @@ class ShopManagementRepositoryImpl implements IShopManagementRepository {
         name: remoteShop.name as String,
         address: remoteShop.address as String,
         phone: remoteShop.phone as String? ?? '',
-        workingHours:
-            cached?.workingHours ?? WorkingHoursEntity.defaultSchedule(),
+        workingHours: remoteShop.workingHours as Map<int, WorkingHoursEntity>,
       );
     }
 
@@ -421,6 +420,10 @@ class ShopManagementRepositoryImpl implements IShopManagementRepository {
       name: settings.name.trim(),
       address: settings.address.trim(),
       phone: settings.phone.trim(),
+    );
+    await _catalogDatasource.updateWorkingHours(
+      id: _remoteShopId(settings.shopId),
+      workingHours: settings.workingHours,
     );
   }
 

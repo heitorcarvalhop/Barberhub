@@ -86,15 +86,15 @@ class _State extends ConsumerState<BarberShopSettingsScreen> {
             // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             const SliverToBoxAdapter(
                 child: Column(children: [
-              BsScreenHeader(eyebrow: 'barbearia', title: 'ConfiguraÃ§Ãµes'),
+              BsScreenHeader(eyebrow: 'barbearia', title: 'Configurações'),
               SizedBox(height: 28),
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 24),
-                child: BsSectionHeader(title: 'InformaÃ§Ãµes gerais'),
+                child: BsSectionHeader(title: 'Informações gerais'),
               ),
             ])),
 
-            // â”€â”€ Campos bÃ¡sicos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // â”€â”€ Campos básicos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             SliverToBoxAdapter(
                 child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 14, 24, 0),
@@ -104,17 +104,17 @@ class _State extends ConsumerState<BarberShopSettingsScreen> {
                   controller: _nameCtrl,
                   textInputAction: TextInputAction.next,
                   validator: (v) =>
-                      (v?.trim().isEmpty ?? true) ? 'ObrigatÃ³rio' : null,
+                      (v?.trim().isEmpty ?? true) ? 'Obrigatório' : null,
                 ),
                 const SizedBox(height: 14),
                 BsTextField(
-                  label: 'LocalizaÃ§Ã£o / EndereÃ§o',
+                  label: 'Localização / Endereço',
                   hint: 'Ex: Rua das Flores, 123 â€“ Centro',
                   controller: _addressCtrl,
                   maxLines: 2,
                   textInputAction: TextInputAction.next,
                   validator: (v) =>
-                      (v?.trim().isEmpty ?? true) ? 'ObrigatÃ³rio' : null,
+                      (v?.trim().isEmpty ?? true) ? 'Obrigatório' : null,
                 ),
                 const SizedBox(height: 14),
                 BsTextField(
@@ -126,11 +126,11 @@ class _State extends ConsumerState<BarberShopSettingsScreen> {
               ]),
             )),
 
-            // â”€â”€ HorÃ¡rios por dia â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            // â”€â”€ Horários por dia â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             const SliverToBoxAdapter(
                 child: Padding(
               padding: EdgeInsets.fromLTRB(24, 28, 24, 14),
-              child: BsSectionHeader(title: 'HorÃ¡rio de funcionamento'),
+              child: BsSectionHeader(title: 'Horário de funcionamento'),
             )),
 
             SliverList(
@@ -157,7 +157,7 @@ class _State extends ConsumerState<BarberShopSettingsScreen> {
                 child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
               child: BsSaveButton(
-                label: 'Salvar configuraÃ§Ãµes',
+                label: 'Salvar configurações',
                 onPressed: _save,
                 isLoading: state.isSaving,
               ),

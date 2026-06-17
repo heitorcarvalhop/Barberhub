@@ -463,16 +463,46 @@ class _AppointmentCard extends StatelessWidget {
                                 ?.copyWith(fontSize: 13),
                           ),
                           const Spacer(),
-                          Text(
-                            a.service.formattedPrice,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                    fontSize: 14,
-                                    color: AppTheme.gold,
-                                    fontWeight: FontWeight.w600),
-                          ),
+                          if (a.paidViaMembership)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: AppTheme.gold.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: AppTheme.gold.withOpacity(0.35)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.workspace_premium_rounded,
+                                      color: AppTheme.gold, size: 11),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Assinatura',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                            fontSize: 11,
+                                            color: AppTheme.gold,
+                                            fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            Text(
+                              a.service.formattedPrice,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                      fontSize: 14,
+                                      color: AppTheme.gold,
+                                      fontWeight: FontWeight.w600),
+                            ),
                         ],
                       ),
                     ],
@@ -522,7 +552,7 @@ class _AppointmentCard extends StatelessWidget {
             ),
           ],
 
-          // â”€â”€ BotÃ£o Avaliar / Badge avaliado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          // â”€â”€ Botão Avaliar / Badge avaliado â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           if (a.canReview && onReview != null) ...[
             Container(height: 1, color: AppTheme.divider),
             Material(
@@ -567,7 +597,7 @@ class _AppointmentCard extends StatelessWidget {
                     children: List.generate(
                         5,
                         (i) => Icon(
-                              i < a.review!.rating
+                              i < a.review!.overallRating.round()
                                   ? Icons.star_rounded
                                   : Icons.star_outline_rounded,
                               size: 14,
@@ -577,7 +607,8 @@ class _AppointmentCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      a.review!.comment ?? a.review!.ratingLabel,
+                      a.review!.comment ??
+                          ReviewModel.labelFor(a.review!.overallRating.round()),
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontSize: 12, color: AppTheme.textSecondary),
                       overflow: TextOverflow.ellipsis,

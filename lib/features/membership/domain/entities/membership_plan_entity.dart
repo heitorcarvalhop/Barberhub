@@ -72,6 +72,9 @@ class MembershipPlanEntity {
   /// Se o assinante tem prioridade na fila de agendamento.
   final bool priorityBooking;
 
+  /// Percentual de desconto em produtos para assinantes (0-100).
+  final int productDiscountPercent;
+
   /// Se o plano está ativo e disponível para assinaturas.
   final bool isActive;
 
@@ -85,6 +88,7 @@ class MembershipPlanEntity {
     this.cutsPerMonth,
     this.includesBeard = false,
     this.priorityBooking = false,
+    this.productDiscountPercent = 0,
     this.isActive = true,
   });
 
@@ -97,7 +101,8 @@ class MembershipPlanEntity {
   MembershipPlanEntity copyWith({
     String? id, String? barbershopId, MembershipTier? tier,
     String? name, double? priceMonthly, List<String>? benefits,
-    int? cutsPerMonth, bool? includesBeard, bool? priorityBooking, bool? isActive,
+    int? cutsPerMonth, bool? includesBeard, bool? priorityBooking,
+    int? productDiscountPercent, bool? isActive,
   }) =>
       MembershipPlanEntity(
         id: id ?? this.id,
@@ -109,6 +114,8 @@ class MembershipPlanEntity {
         cutsPerMonth: cutsPerMonth ?? this.cutsPerMonth,
         includesBeard: includesBeard ?? this.includesBeard,
         priorityBooking: priorityBooking ?? this.priorityBooking,
+        productDiscountPercent:
+            productDiscountPercent ?? this.productDiscountPercent,
         isActive: isActive ?? this.isActive,
       );
 }

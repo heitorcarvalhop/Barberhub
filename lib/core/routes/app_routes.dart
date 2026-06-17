@@ -6,6 +6,7 @@ class AppRoutes {
   static const String login = '/login';
   static const String register = '/register';
   static const String forgotPassword = '/forgot-password';
+  static const String resetPassword = '/reset-password';
 
   // ── Cliente ────────────────────────────────────────────────────────────────
   static const String home = '/home';
@@ -16,6 +17,7 @@ class AppRoutes {
   static const String cart = '/cart';
   static const String review = '/review';
   static const String aiAssistant = '/ai-assistant';
+  static const String editProfile = '/edit-profile';
 
   // ── Membership ────────────────────────────────────────────────────────────
   /// Planos de uma barbearia específica (requer MembershipPlansArgs).
@@ -24,6 +26,7 @@ class AppRoutes {
   // ── Barbearia (proprietário) ───────────────────────────────────────────────
   static const String barberShopHome = '/barber-shop-home';
   static const String membershipManagement = '/barber-shop/memberships';
+  static const String shopReviews = '/barber-shop/reviews';
 
   // ── Legado ────────────────────────────────────────────────────────────────
   static const String barberHome = '/barber-home';

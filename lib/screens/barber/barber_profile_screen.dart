@@ -23,6 +23,8 @@ class BarberProfileScreen extends ConsumerWidget {
     }
     final barberId = user.linkedId ?? '';
     final barber = data.allBarbers.where((b) => b.id == barberId).firstOrNull;
+    final liveRating = data.ratingForBarber(barberId);
+    final liveReviewCount = data.reviewsForBarber(barberId).length;
     final appts = data.appointmentsForBarber(barberId);
     final completed =
         appts.where((a) => a.status == AppointmentStatus.completed).length;
@@ -72,8 +74,9 @@ class BarberProfileScreen extends ConsumerWidget {
                         if (barber != null) ...[
                           const SizedBox(width: 8),
                           StarRating(
-                              rating: barber.rating,
-                              reviewCount: barber.reviewCount),
+                              rating:
+                                  liveReviewCount > 0 ? liveRating : barber.rating,
+                              reviewCount: liveReviewCount),
                         ],
                       ]),
                     ])),
@@ -386,7 +389,7 @@ class _BarberReviewsSection extends StatelessWidget {
                           children: List.generate(
                             5,
                             (i) => Icon(
-                              i < r.rating
+                              i < r.barberRating
                                   ? Icons.star_rounded
                                   : Icons.star_outline_rounded,
                               size: 13,

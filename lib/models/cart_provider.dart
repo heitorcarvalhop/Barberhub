@@ -22,6 +22,18 @@ class CartItem {
 class CartProvider extends ChangeNotifier {
   final List<CartItem> _items = [];
   BarbershopModel? _barbershop;
+  int _membershipDiscountPercent = 0;
+
+  /// Percentual de desconto em produtos do plano de assinatura ativo
+  /// do cliente na barbearia deste carrinho (0 = não assinante).
+  int get membershipDiscountPercent => _membershipDiscountPercent;
+
+  /// Atualiza o desconto de assinatura aplicável ao carrinho atual.
+  void setMembershipDiscountPercent(int percent) {
+    if (_membershipDiscountPercent == percent) return;
+    _membershipDiscountPercent = percent;
+    notifyListeners();
+  }
 
   // ── Conflito pendente ──────────────────────────────────────────────────────
   // Quando o usuário tenta adicionar um produto de outra barbearia,
@@ -38,7 +50,17 @@ class CartProvider extends ChangeNotifier {
 
   int get itemCount => _items.fold(0, (sum, item) => sum + item.quantity);
 
-  double get total => _items.fold(0.0, (sum, item) => sum + item.subtotal);
+  double get subtotal => _items.fold(0.0, (sum, item) => sum + item.subtotal);
+
+  double get discountAmount => subtotal * _membershipDiscountPercent / 100;
+
+  double get total => subtotal - discountAmount;
+
+  String get formattedSubtotal =>
+      'R\$ ${subtotal.toStringAsFixed(2).replaceAll('.', ',')}';
+
+  String get formattedDiscount =>
+      '-R\$ ${discountAmount.toStringAsFixed(2).replaceAll('.', ',')}';
 
   String get formattedTotal =>
       'R\$ ${total.toStringAsFixed(2).replaceAll('.', ',')}';
@@ -124,6 +146,7 @@ class CartProvider extends ChangeNotifier {
     _items.clear();
     _barbershop = null;
     _pendingConflict = null;
+    _membershipDiscountPercent = 0;
     notifyListeners();
   }
 

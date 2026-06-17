@@ -33,6 +33,7 @@ class SupabaseAppointmentDatasource {
     required BarbershopModel barbershop,
     required DateTime date,
     required String timeSlot,
+    bool paidViaMembership = false,
   }) async {
     final client = SupabaseService.client;
     if (client == null) {
@@ -50,6 +51,7 @@ class SupabaseAppointmentDatasource {
           'date': _dateOnly(date),
           'time_slot': timeSlot,
           'status': AppointmentStatus.scheduled.name,
+          'paid_via_membership': paidViaMembership,
         })
         .select()
         .single();
@@ -84,6 +86,7 @@ class SupabaseAppointmentDatasource {
       barbershop: old.barbershop,
       date: newDate,
       timeSlot: newTimeSlot,
+      paidViaMembership: old.paidViaMembership,
     );
   }
 
@@ -116,7 +119,13 @@ class SupabaseAppointmentDatasource {
       date: date,
       timeSlot: _string(row['time_slot']),
       status: _status(row['status']),
+      paidViaMembership: _bool(row['paid_via_membership']),
     );
+  }
+
+  bool _bool(Object? value) {
+    if (value is bool) return value;
+    return value?.toString().toLowerCase() == 'true';
   }
 
   List<Map<String, dynamic>> _rows(Object? value) {

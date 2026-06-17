@@ -31,24 +31,31 @@ class UserEntity {
     return name.substring(0, name.length >= 2 ? 2 : 1).toUpperCase();
   }
 
-  bool get isClient    => role.isClient;
+  bool get isClient => role.isClient;
   bool get isBarberShop => role.isBarberShop;
-  bool get isBarber    => role.isBarber;
-  bool get isAdmin     => role.isAdmin;
+  bool get isBarber => role.isBarber;
+  bool get isAdmin => role.isAdmin;
 
   /// Rota inicial após login bem-sucedido
   String get initialRoute {
     switch (role) {
-      case UserRole.client:     return '/home';
-      case UserRole.barberShop: return '/barber-shop-home';
-      case UserRole.barber:     return '/barber-home';
-      case UserRole.admin:      return '/admin-home';
+      case UserRole.client:
+        return '/home';
+      case UserRole.barberShop:
+        return '/barber-shop-home';
+      case UserRole.barber:
+        return '/barber-home';
+      case UserRole.admin:
+        return '/admin-home';
     }
   }
 
   UserEntity copyWith({
-    String? id, String? name, String? email,
-    UserRole? role, String? linkedId,
+    String? id,
+    String? name,
+    String? email,
+    UserRole? role,
+    String? linkedId,
   }) =>
       UserEntity(
         id: id ?? this.id,

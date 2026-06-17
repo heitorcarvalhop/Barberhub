@@ -2,6 +2,7 @@ import 'package:barber_hub/core/errors/failures.dart';
 import 'package:barber_hub/features/auth/data/datasources/auth_local_datasource.dart';
 import 'package:barber_hub/features/auth/data/datasources/auth_mock_datasource.dart';
 import 'package:barber_hub/features/auth/data/datasources/auth_supabase_datasource.dart';
+import 'package:barber_hub/features/auth/data/models/user_model.dart';
 import 'package:barber_hub/features/auth/domain/entities/user_entity.dart';
 import 'package:barber_hub/features/auth/domain/repositories/i_auth_repository.dart';
 import 'package:barber_hub/shared/mock/mock_data.dart';
@@ -111,5 +112,78 @@ class AuthRepositoryImpl implements IAuthRepository {
       return;
     }
     await Future.delayed(const Duration(milliseconds: 700));
+  }
+
+  @override
+  Future<void> verifyPasswordResetCode(String email, String token) async {
+    if (_useSupabase) {
+      await _supabase.verifyPasswordResetCode(email, token);
+    }
+  }
+
+  @override
+  Future<void> updatePassword(String newPassword) async {
+    if (_useSupabase) {
+      await _supabase.updatePassword(newPassword);
+    }
+  }
+
+  @override
+  Future<(UserEntity?, Failure?)> updateProfile({required String name}) async {
+    final session = await _local.loadSession();
+    if (session == null) {
+      return (null, const AuthFailure('Sessão inválida.'));
+    }
+
+    final (user, failure) = _useSupabase
+        ? await _supabase.updateProfile(name: name)
+        : await _mock.updateProfile(id: session.id, name: name);
+    if (failure != null) return (null, failure);
+
+    if (!_useSupabase) await _persistMockUser(user!);
+    await _local.saveSession(user!);
+    return (user, null);
+  }
+
+  @override
+  Future<Failure?> requestEmailChange(String newEmail) async {
+    if (_useSupabase) {
+      return await _supabase.requestEmailChange(newEmail);
+    }
+    await Future.delayed(const Duration(milliseconds: 700));
+    return null;
+  }
+
+  @override
+  Future<(UserEntity?, Failure?)> confirmEmailChange({
+    required String newEmail,
+    required String token,
+  }) async {
+    final session = await _local.loadSession();
+    if (session == null) {
+      return (null, const AuthFailure('Sessão inválida.'));
+    }
+
+    final (user, failure) = _useSupabase
+        ? await _supabase.confirmEmailChange(newEmail: newEmail, token: token)
+        : await _mock.updateEmail(id: session.id, newEmail: newEmail);
+    if (failure != null) return (null, failure);
+
+    if (!_useSupabase) await _persistMockUser(user!);
+    await _local.saveSession(user!);
+    return (user, null);
+  }
+
+  /// Mantém a lista de usuários registrados (cache local de dev/mock) em
+  /// sincronia após alteração de perfil, preservando a senha já salva.
+  Future<void> _persistMockUser(UserModel user) async {
+    final json = user.toJson();
+    final cachedUsers = await _local.loadRegisteredUsers();
+    final cached = cachedUsers.firstWhere(
+      (u) => u['id'] == user.id,
+      orElse: () => const {},
+    );
+    json['password'] = cached['password'];
+    await _local.saveRegisteredUser(json);
   }
 }

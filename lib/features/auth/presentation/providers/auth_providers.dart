@@ -59,5 +59,6 @@ final authNotifierProvider =
     register: ref.read(_registerUseCaseProvider),
     autoLogin: ref.read(_autoLoginUseCaseProvider),
     logout: ref.read(_logoutUseCaseProvider),
+    repository: ref.read(authRepositoryProvider),
   );
 });

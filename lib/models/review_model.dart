@@ -11,7 +11,8 @@ class ReviewModel {
   final String barberId;
   final String barberName;
   final String serviceName;
-  final int rating;           // 1 a 5
+  final int barbershopRating;  // 1 a 5 — nota para a barbearia
+  final int barberRating;      // 1 a 5 — nota para o barbeiro
   final String? comment;
   final DateTime createdAt;
 
@@ -25,10 +26,14 @@ class ReviewModel {
     required this.barberId,
     required this.barberName,
     required this.serviceName,
-    required this.rating,
+    required this.barbershopRating,
+    required this.barberRating,
     this.comment,
     required this.createdAt,
   });
+
+  /// Média das duas notas — usada para exibições resumidas (ex: emoji geral).
+  double get overallRating => (barbershopRating + barberRating) / 2;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   String get formattedDate {
@@ -39,8 +44,8 @@ class ReviewModel {
     return '${createdAt.day} de ${months[createdAt.month]} de ${createdAt.year}';
   }
 
-  /// Retorna o emoji correspondente à nota.
-  String get ratingEmoji {
+  /// Retorna o emoji correspondente a uma nota (1-5).
+  static String emojiFor(int rating) {
     switch (rating) {
       case 5: return '🤩';
       case 4: return '😊';
@@ -50,8 +55,8 @@ class ReviewModel {
     }
   }
 
-  /// Rótulo textual da nota.
-  String get ratingLabel {
+  /// Rótulo textual correspondente a uma nota (1-5).
+  static String labelFor(int rating) {
     switch (rating) {
       case 5: return 'Excelente';
       case 4: return 'Bom';

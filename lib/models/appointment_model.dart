@@ -23,6 +23,10 @@ class AppointmentModel {
   /// null = ainda não avaliado.
   ReviewModel? review;
 
+  /// Se este agendamento foi resgatado como corte incluso na assinatura
+  /// (não cobrado separadamente).
+  final bool paidViaMembership;
+
   AppointmentModel({
     required this.id,
     required this.clientId,
@@ -34,6 +38,7 @@ class AppointmentModel {
     required this.timeSlot,
     this.status = AppointmentStatus.scheduled,
     this.review,
+    this.paidViaMembership = false,
   }) {
     assert(
       barbershop.services.any((s) => s.id == service.id),

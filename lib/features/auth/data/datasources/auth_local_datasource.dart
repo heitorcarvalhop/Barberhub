@@ -34,7 +34,8 @@ class AuthLocalDatasource {
       // CacheService já limpa a chave corrompida no catch interno.
       // Aqui apenas logamos para facilitar debug.
       if (kDebugMode) {
-        debugPrint('[AuthLocalDatasource.loadSession] Deserialização falhou: $e');
+        debugPrint(
+            '[AuthLocalDatasource.loadSession] Deserialização falhou: $e');
         debugPrint(st.toString());
       }
       await _cache.clearSession();

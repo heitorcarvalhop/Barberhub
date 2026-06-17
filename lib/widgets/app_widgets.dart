@@ -842,42 +842,51 @@ class EmptyState extends StatelessWidget {
       this.actionLabel,
       this.onAction});
   @override
-  Widget build(BuildContext context) => Center(
-      child: Padding(
-          padding: const EdgeInsets.all(40),
-          child:
-              Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                    color: AppTheme.surfaceElevated,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppTheme.inputBorder)),
-                child: Icon(icon, color: AppTheme.textHint, size: 32)),
-            const SizedBox(height: 20),
-            Text(title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(color: AppTheme.textPrimary),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            Text(subtitle,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(height: 1.5),
-                textAlign: TextAlign.center),
-            if (actionLabel != null) ...[
-              const SizedBox(height: 24),
-              SizedBox(
-                  width: 180,
-                  child: ElevatedButton(
-                      onPressed: onAction,
-                      child: Text(actionLabel!.toUpperCase())))
-            ],
-          ])));
+  Widget build(BuildContext context) => LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Center(
+                  child: Padding(
+                      padding: const EdgeInsets.all(40),
+                      child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                                width: 80,
+                                height: 80,
+                                decoration: BoxDecoration(
+                                    color: AppTheme.surfaceElevated,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                        color: AppTheme.inputBorder)),
+                                child: Icon(icon,
+                                    color: AppTheme.textHint, size: 32)),
+                            const SizedBox(height: 20),
+                            Text(title,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleLarge
+                                    ?.copyWith(color: AppTheme.textPrimary),
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 8),
+                            Text(subtitle,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(height: 1.5),
+                                textAlign: TextAlign.center),
+                            if (actionLabel != null) ...[
+                              const SizedBox(height: 24),
+                              SizedBox(
+                                  width: 180,
+                                  child: ElevatedButton(
+                                      onPressed: onAction,
+                                      child: Text(
+                                          actionLabel!.toUpperCase())))
+                            ],
+                          ]))))));
 }
 
 class StatCard extends StatelessWidget {

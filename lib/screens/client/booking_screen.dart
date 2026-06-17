@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../core/routes/app_routes.dart';
 import '../../features/auth/presentation/providers/auth_providers.dart';
+import '../../features/membership/domain/entities/membership_entity.dart';
+import '../../features/membership/domain/entities/membership_plan_entity.dart';
+import '../../features/membership/presentation/providers/membership_providers.dart';
 import '../../models/app_data_provider.dart';
 import '../../models/appointment_booking_failure.dart';
 import '../../mock/mock_data.dart';
@@ -29,7 +32,21 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   DateTime? _selectedDate;
   String? _selectedTime;
   int _step = 0; // 0=barbeiro, 1=data/hora, 2=confirmar
+  bool _useMembershipCut = false;
   DateTime get _bookingNow => DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final authState = ref.read(authNotifierProvider);
+      if (authState is AuthAuthenticated) {
+        ref
+            .read(clientMembershipProvider.notifier)
+            .load(clientId: authState.user.id);
+      }
+    });
+  }
 
   /// Parse seguro dos arguments. Garante que barbershop sempre vem
   /// de uma barbearia real (args ou provider).
@@ -45,7 +62,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       service = args;
     }
 
-    // Fallback para provider se nÃ£o vier via args
+    // Fallback para provider se não vier via args
     barbershop ??= data.selectedBarbershop ?? data.barbershops.first;
 
     if (service == null) {
@@ -61,13 +78,17 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     final args = ModalRoute.of(context)!.settings.arguments;
     final (service, barbershop) = _parseArgs(args, data);
 
-    // Barbeiros APENAS da barbearia em questÃ£o
+    // Barbeiros APENAS da barbearia em questão
     final barbers = barbershop.barbers.where((b) => b.isActive).toList();
 
-    // Horarios jÃ¡ ocupados para o barbeiro/data selecionados
+    // Horarios já ocupados para o barbeiro/data selecionados
     final bookedSlots = (_selectedBarber != null && _selectedDate != null)
         ? data.bookedSlotsFor(_selectedBarber!.id, _selectedDate!)
         : <String>{};
+
+    // Assinatura ativa do cliente nesta barbearia (se houver)
+    final membershipState = ref.watch(clientMembershipProvider);
+    final activeMembership = membershipState.activeForShop(barbershop.id);
 
     return Scaffold(
       body: SafeArea(
@@ -139,6 +160,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                   barbers: barbers,
                   bookedSlots: bookedSlots,
                   data: data,
+                  activeMembership: activeMembership,
                 ),
               ),
             ),
@@ -154,6 +176,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     required List<BarberModel> barbers,
     required Set<String> bookedSlots,
     required AppDataProvider data,
+    required MembershipEntity? activeMembership,
   }) {
     switch (_step) {
       case 0:
@@ -171,11 +194,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           selectedTime: _selectedTime,
           bookedSlots: bookedSlots,
           referenceNow: _bookingNow,
+          workingHours: barbershop.workingHours,
           isDateBlocked: (date) =>
-              data.isDateBlockedForShop(barbershop.id, date),
+              data.isDateBlockedForShop(barbershop.id, date) ||
+              !(barbershop.workingHours[date.weekday]?.isOpen ?? true),
           onDateSelected: (d) => setState(() {
             _selectedDate = d;
-            _selectedTime = null; // reset horÃ¡rio ao trocar data
+            _selectedTime = null; // reset horário ao trocar data
           }),
           onTimeSelected: (t) => setState(() => _selectedTime = t),
           onNext: () => setState(() => _step = 2),
@@ -188,8 +213,13 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
           barbershop: barbershop,
           date: _selectedDate!,
           timeSlot: _selectedTime!,
-          onConfirm: () => _confirm(service, barbershop, data),
+          onConfirm: () => _confirm(service, barbershop, data, activeMembership),
           isLoading: data.isLoading,
+          activeMembership: activeMembership,
+          useMembershipCut: _useMembershipCut,
+          onToggleUseMembership: activeMembership == null
+              ? null
+              : (v) => setState(() => _useMembershipCut = v),
         );
       default:
         return const SizedBox.shrink();
@@ -200,6 +230,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     ServiceModel service,
     BarbershopModel barbershop,
     AppDataProvider data,
+    MembershipEntity? activeMembership,
   ) async {
     final authState = ref.read(authNotifierProvider);
     final user = authState is AuthAuthenticated ? authState.user : null;
@@ -208,6 +239,8 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
       _showBookingError(AppointmentBookingFailure.notAuthenticated);
       return;
     }
+
+    final redeemCut = _useMembershipCut && activeMembership != null;
 
     try {
       await data.bookAppointment(
@@ -218,9 +251,15 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
         barbershop: barbershop,
         date: _selectedDate!,
         timeSlot: _selectedTime!,
+        paidViaMembership: redeemCut,
       );
+      if (redeemCut) {
+        await ref
+            .read(clientMembershipProvider.notifier)
+            .useCut(activeMembership.id);
+      }
       if (!mounted) return;
-      _showSuccessDialog(barbershop.name);
+      _showSuccessDialog(barbershop.name, usedMembership: redeemCut);
     } catch (error) {
       final failure = error is AppointmentBookingException
           ? error.failure
@@ -269,7 +308,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
     }
   }
 
-  void _showSuccessDialog(String barbershopName) {
+  void _showSuccessDialog(String barbershopName, {bool usedMembership = false}) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -305,6 +344,32 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
                     ?.copyWith(height: 1.6, color: AppTheme.textSecondary),
                 textAlign: TextAlign.center,
               ),
+              if (usedMembership) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.gold.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: AppTheme.gold.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.workspace_premium_rounded,
+                          color: AppTheme.gold, size: 14),
+                      const SizedBox(width: 6),
+                      Text('Corte incluso na sua assinatura',
+                          style: GoogleFonts.jost(
+                              color: AppTheme.gold,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 28),
               SizedBox(
                 width: double.infinity,
@@ -579,6 +644,7 @@ class _DateTimeStep extends StatelessWidget {
   final String? selectedTime;
   final Set<String> bookedSlots;
   final DateTime referenceNow;
+  final Map<int, WorkingHoursEntity> workingHours;
   final bool Function(DateTime) isDateBlocked;
   final ValueChanged<DateTime> onDateSelected;
   final ValueChanged<String> onTimeSelected;
@@ -590,14 +656,24 @@ class _DateTimeStep extends StatelessWidget {
     required this.selectedTime,
     required this.bookedSlots,
     required this.referenceNow,
+    required this.workingHours,
     required this.isDateBlocked,
     required this.onDateSelected,
     required this.onTimeSelected,
     required this.onNext,
   });
+
+  List<String> get _slotsForDay {
+    final date = selectedDate;
+    if (date == null) return MockData.timeSlots;
+    final hours = workingHours[date.weekday];
+    if (hours == null) return MockData.timeSlots;
+    return hours.availableSlots(MockData.timeSlots);
+  }
+
   bool get _hasUnavailableSlots {
     if (selectedDate == null) return false;
-    return bookedSlots.isNotEmpty || MockData.timeSlots.any(_isPastSlot);
+    return bookedSlots.isNotEmpty || _slotsForDay.any(_isPastSlot);
   }
 
   bool _isPastSlot(String slot) {
@@ -748,10 +824,19 @@ class _DateTimeStep extends StatelessWidget {
                       ),
                     ),
                   const SizedBox(height: 8),
+                  if (_slotsForDay.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'Esta barbearia está fechada neste dia.',
+                        style: GoogleFonts.jost(
+                            color: AppTheme.textHint, fontSize: 13),
+                      ),
+                    ),
                   Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: MockData.timeSlots.map((slot) {
+                    children: _slotsForDay.map((slot) {
                       final isSel = selectedTime == slot;
                       final isBooked = bookedSlots.contains(slot);
                       final isPast = _isPastSlot(slot);
@@ -856,6 +941,9 @@ class _ConfirmStep extends StatelessWidget {
   final String timeSlot;
   final VoidCallback onConfirm;
   final bool isLoading;
+  final MembershipEntity? activeMembership;
+  final bool useMembershipCut;
+  final ValueChanged<bool>? onToggleUseMembership;
 
   const _ConfirmStep({
     super.key,
@@ -866,17 +954,53 @@ class _ConfirmStep extends StatelessWidget {
     required this.timeSlot,
     required this.onConfirm,
     required this.isLoading,
+    this.activeMembership,
+    this.useMembershipCut = false,
+    this.onToggleUseMembership,
   });
 
   @override
   Widget build(BuildContext context) {
+    final membership = activeMembership;
+    final canRedeemCut = membership != null && membership.hasCutsAvailable;
+    final isVip = membership?.plan.priorityBooking ?? false;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 4),
-          child: Text('Confirmar',
-              style: Theme.of(context).textTheme.headlineMedium),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text('Confirmar',
+                    style: Theme.of(context).textTheme.headlineMedium),
+              ),
+              if (isVip)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: membership!.plan.tier.accentColor
+                        .withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: membership.plan.tier.accentColor
+                            .withValues(alpha: 0.4)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.star_rounded,
+                        color: membership.plan.tier.accentColor, size: 13),
+                    const SizedBox(width: 4),
+                    Text('Prioridade VIP',
+                        style: GoogleFonts.jost(
+                            color: membership.plan.tier.accentColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700)),
+                  ]),
+                ),
+            ],
+          ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -899,9 +1023,19 @@ class _ConfirmStep extends StatelessWidget {
                   icon: Icons.content_cut_rounded,
                   label: 'Servico',
                   value: service.name,
-                  subValue: service.formattedPrice,
+                  subValue: useMembershipCut
+                      ? 'Incluso na assinatura'
+                      : service.formattedPrice,
                 ),
                 const SizedBox(height: 12),
+                if (canRedeemCut) ...[
+                  _MembershipCutBanner(
+                    membership: membership,
+                    value: useMembershipCut,
+                    onChanged: onToggleUseMembership,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _ConfirmRow(
                   icon: Icons.person_outline_rounded,
                   label: 'Barbeiro',
@@ -980,6 +1114,70 @@ class _ConfirmStep extends StatelessWidget {
       'dez'
     ];
     return '${d.day} de ${months[d.month]} de ${d.year}';
+  }
+}
+
+// ── Banner: usar corte da assinatura ────────────────────────────────────────
+class _MembershipCutBanner extends StatelessWidget {
+  final MembershipEntity membership;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  const _MembershipCutBanner({
+    required this.membership,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = membership.plan.tier.accentColor;
+    return GestureDetector(
+      onTap: onChanged == null ? null : () => onChanged!(!value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: value ? color.withValues(alpha: 0.1) : AppTheme.surfaceElevated,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: value ? color : AppTheme.inputBorder,
+            width: value ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.workspace_premium_rounded, color: color, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Usar corte da assinatura ${membership.plan.name}',
+                    style: GoogleFonts.jost(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    membership.cutsRemainingLabel,
+                    style: GoogleFonts.jost(color: color, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeThumbColor: color,
+              inactiveTrackColor: AppTheme.inputBorder,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

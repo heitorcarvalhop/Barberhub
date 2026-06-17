@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:barber_hub/core/utils/app_icons.dart';
+import 'package:barber_hub/features/barber_shop/domain/entities/working_hours_entity.dart';
 import 'service_model.dart';
 import 'barber_model.dart';
 import 'product_model.dart';
 
 export 'product_model.dart';
+export 'package:barber_hub/features/barber_shop/domain/entities/working_hours_entity.dart';
 
 class BarbershopLocation {
   final double latitude;
@@ -40,6 +42,7 @@ class BarbershopModel {
   final String? description;
   final BarbershopLocation? location;
   bool isOpen;
+  final Map<int, WorkingHoursEntity> workingHours;
 
   /// Ícone Flutter correspondente ao campo coverEmoji.
   /// Suporta chaves string ('scissors','zap','crown') e emojis legados.
@@ -63,7 +66,8 @@ class BarbershopModel {
     this.description,
     this.location,
     this.isOpen = true,
-  });
+    Map<int, WorkingHoursEntity>? workingHours,
+  }) : workingHours = workingHours ?? WorkingHoursEntity.defaultSchedule();
 
   bool get hasLocation => location != null;
 
@@ -89,6 +93,7 @@ class BarbershopModel {
       description: description,
       location: location ?? this.location,
       isOpen: isOpen,
+      workingHours: workingHours,
     );
   }
 

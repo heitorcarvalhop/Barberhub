@@ -7,6 +7,7 @@ import 'package:barber_hub/features/auth/presentation/providers/auth_providers.d
 import 'package:barber_hub/features/membership/domain/entities/membership_entity.dart';
 import 'package:barber_hub/features/membership/domain/entities/membership_plan_entity.dart';
 import 'package:barber_hub/features/membership/presentation/providers/membership_providers.dart';
+import 'package:barber_hub/features/membership/presentation/providers/membership_state.dart';
 import 'package:barber_hub/features/membership/presentation/models/membership_plans_args.dart';
 import 'package:barber_hub/features/membership/presentation/widgets/membership_widgets.dart';
 
@@ -37,6 +38,21 @@ class _State extends ConsumerState<MyMembershipScreen> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<ClientMembershipState>(clientMembershipProvider, (prev, next) {
+      if (next.error != null && next.error != prev?.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(next.error!)),
+        );
+        ref.read(clientMembershipProvider.notifier).clearMessages();
+      } else if (next.successMessage != null &&
+          next.successMessage != prev?.successMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(next.successMessage!)),
+        );
+        ref.read(clientMembershipProvider.notifier).clearMessages();
+      }
+    });
+
     final state = ref.watch(clientMembershipProvider);
     final authState = ref.watch(authNotifierProvider);
     final userName = authState is AuthAuthenticated

@@ -246,6 +246,10 @@ class _AppointmentCard extends StatelessWidget {
   final AppointmentModel appt;
   const _AppointmentCard({required this.appt});
 
+  Future<void> _setStatus(BuildContext context, AppointmentStatus status) =>
+      provider.Provider.of<AppDataProvider>(context, listen: false)
+          .updateAppointmentStatus(appt.id, status);
+
   @override
   Widget build(BuildContext context) {
     final statusColor = appt.status == AppointmentStatus.scheduled
@@ -255,7 +259,8 @@ class _AppointmentCard extends StatelessWidget {
             : AppTheme.error;
 
     return BsCard(
-      child: Row(children: [
+      child: Column(children: [
+        Row(children: [
         Container(
           width: 48,
           height: 48,
@@ -310,6 +315,39 @@ class _AppointmentCard extends StatelessWidget {
                     fontWeight: FontWeight.w600)),
           ),
         ]),
+      ]),
+        if (appt.status == AppointmentStatus.scheduled) ...[
+          const SizedBox(height: 10),
+          Container(height: 1, color: AppTheme.divider),
+          const SizedBox(height: 6),
+          Row(children: [
+            Expanded(
+              child: TextButton.icon(
+                onPressed: () => _setStatus(context, AppointmentStatus.completed),
+                icon: const Icon(Icons.check_circle_outline_rounded, size: 15),
+                label: const Text('Concluir'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.gold,
+                  textStyle:
+                      GoogleFonts.jost(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+            Container(width: 1, height: 20, color: AppTheme.divider),
+            Expanded(
+              child: TextButton.icon(
+                onPressed: () => _setStatus(context, AppointmentStatus.cancelled),
+                icon: const Icon(Icons.cancel_outlined, size: 15),
+                label: const Text('Cancelar'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.error,
+                  textStyle:
+                      GoogleFonts.jost(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+          ]),
+        ],
       ]),
     );
   }

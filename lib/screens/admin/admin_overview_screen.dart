@@ -151,8 +151,10 @@ class AdminOverviewScreen extends ConsumerWidget {
                             StatCard(
                               value: data.allReviews.isEmpty
                                   ? '–'
-                                  : (data.allReviews
-                                              .fold(0, (s, r) => s + r.rating) /
+                                  : (data.allReviews.fold(
+                                              0,
+                                              (s, r) =>
+                                                  s + r.barbershopRating) /
                                           data.allReviews.length)
                                       .toStringAsFixed(1),
                               label: 'Nota média',
@@ -162,7 +164,7 @@ class AdminOverviewScreen extends ConsumerWidget {
                             const SizedBox(width: 10),
                             StatCard(
                               value:
-                                  '${data.allReviews.where((r) => r.rating >= 4).length}',
+                                  '${data.allReviews.where((r) => r.barbershopRating >= 4).length}',
                               label: 'Positivas',
                               icon: Icons.thumb_up_outlined,
                               valueColor: const Color(0xFF4CAF50),
@@ -445,52 +447,65 @@ void _showCreateBarbershopDialog(BuildContext context, AppDataProvider data) {
     isScrollControlled: true,
     backgroundColor: AppTheme.surface,
     shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-    builder: (_) => Padding(
-      padding: EdgeInsets.only(left: 24, right: 24, top: 20,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 32),
-      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Center(child: Container(width: 36, height: 4,
-            decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2)))),
-        const SizedBox(height: 20),
-        Text('Nova Barbearia', style: GoogleFonts.jost(color: AppTheme.textPrimary,
-            fontSize: 18, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 20),
-        _AdminTextField(ctrl: nameCtrl, label: 'Nome da barbearia', icon: Icons.storefront_rounded),
-        const SizedBox(height: 12),
-        _AdminTextField(ctrl: addrCtrl, label: 'Endereço', icon: Icons.location_on_rounded),
-        const SizedBox(height: 12),
-        _AdminTextField(ctrl: phoneCtrl, label: 'Telefone', icon: Icons.phone_rounded),
-        const SizedBox(height: 24),
-        SizedBox(width: double.infinity, height: 52,
-          child: ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.trim().isEmpty) return;
-              final id = 'bs_${DateTime.now().millisecondsSinceEpoch}';
-              data.addBarbershop(BarbershopModel(
-                id: id,
-                name: nameCtrl.text.trim(),
-                address: addrCtrl.text.trim(),
-                rating: 0.0,
-                reviewCount: 0,
-                coverEmoji: 'scissors',
-                phone: phoneCtrl.text.trim(),
-                services: [],
-                barbers: [],
-                products: [],
-                isOpen: true,
-              ));
-              Navigator.pop(context);
+    builder: (sheetContext) => StatefulBuilder(
+      builder: (sheetContext, setState) {
+        var saving = false;
+
+        Future<void> submit() async {
+          if (nameCtrl.text.trim().isEmpty) return;
+          setState(() => saving = true);
+          try {
+            await data.addBarbershop(
+              name: nameCtrl.text.trim(),
+              address: addrCtrl.text.trim(),
+              phone: phoneCtrl.text.trim(),
+            );
+            if (sheetContext.mounted) {
+              Navigator.pop(sheetContext);
               AppUtils.showSnack(context, 'Barbearia criada com sucesso!');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.gold,
-              foregroundColor: AppTheme.background,
-              shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+            }
+          } catch (e) {
+            setState(() => saving = false);
+            if (sheetContext.mounted) {
+              AppUtils.showSnack(sheetContext, 'Erro ao criar barbearia.', isError: true);
+            }
+          }
+        }
+
+        return Padding(
+          padding: EdgeInsets.only(left: 24, right: 24, top: 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 32),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Center(child: Container(width: 36, height: 4,
+                decoration: BoxDecoration(color: AppTheme.divider, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 20),
+            Text('Nova Barbearia', style: GoogleFonts.jost(color: AppTheme.textPrimary,
+                fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 20),
+            _AdminTextField(ctrl: nameCtrl, label: 'Nome da barbearia', icon: Icons.storefront_rounded),
+            const SizedBox(height: 12),
+            _AdminTextField(ctrl: addrCtrl, label: 'Endereço', icon: Icons.location_on_rounded),
+            const SizedBox(height: 12),
+            _AdminTextField(ctrl: phoneCtrl, label: 'Telefone', icon: Icons.phone_rounded),
+            const SizedBox(height: 24),
+            SizedBox(width: double.infinity, height: 52,
+              child: ElevatedButton(
+                onPressed: saving ? null : submit,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.gold,
+                  foregroundColor: AppTheme.background,
+                  shape: const RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(8))),
+                ),
+                child: saving
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.background))
+                    : Text('CRIAR BARBEARIA', style: GoogleFonts.jost(fontWeight: FontWeight.w700, letterSpacing: 1.5)),
+              ),
             ),
-            child: Text('CRIAR BARBEARIA', style: GoogleFonts.jost(fontWeight: FontWeight.w700, letterSpacing: 1.5)),
-          ),
-        ),
-      ]),
+          ]),
+        );
+      },
     ),
   );
 }
